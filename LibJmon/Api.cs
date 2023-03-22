@@ -2,19 +2,8 @@
 
 public static class ApiV0
 {
-    public sealed record class JsonFromJmon_Options(
-        Delegates.JsonStrFromBareText? StrFromBareText = null,
-        Delegates.JsonValFromJsonText? ValFromJsonText = null
-    )
-    {
-        public static JsonFromJmon_Options Default { get; } = new();
-    }
-    
-    public static Values.JsonVal JsonFromJmon(Values.JmonSheet jmonSheet, JsonFromJmon_Options options)
-    {
-        var doer = Impl.JsonFromFfjg_Doer.Create(jmonSheet, options);
-        return doer.Do();
-    }
+  
+    public static Values.JsonVal JsonFromJmon(Values.JmonSheet jmonSheet) => Impl.ApiV0.JsonFromJmon(jmonSheet);
 }
 
 public sealed class JmonException : Exception

@@ -24,7 +24,7 @@ string[,] ReadCsvFile(string fileName)
         using var csvReader = new TextFieldParser(fileName)
         {
             Delimiters = new[] { "," },
-            HasFieldsEnclosedInQuotes = true,
+            HasFieldsEnclosedInQuotes = true
         };
 
         while (!csvReader.EndOfData)

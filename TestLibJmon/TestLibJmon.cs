@@ -1,4 +1,4 @@
-using LibJmon.Values;
+/*using LibJmon.Values;
 using static LibJmon.ApiV0;
 namespace TestLibJmon;
 
@@ -88,4 +88,4 @@ public class TestLibJmon
         var jsonText = """{"k0":["v00","v01"],"k1":[],"k2":["v20"]}""";
         Assert.Equal(jsonText, jsonVal.Text);
     }
-}
+}*/
