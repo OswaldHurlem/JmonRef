@@ -3,7 +3,8 @@
 public static class ApiV0
 {
   
-    public static Values.JsonVal JsonFromJmon(Values.JmonSheet jmonSheet) => Impl.ApiV0.JsonFromJmon(jmonSheet);
+    public static Values.JsonVal JsonFromJmon(Values.JmonSheet jmonSheet) => //Impl.ApiV0.JsonFromJmon(jmonSheet);
+        throw new NotImplementedException();
 }
 
 public sealed class JmonException : Exception
