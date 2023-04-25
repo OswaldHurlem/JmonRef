@@ -15,7 +15,7 @@ public static class TestUtil
         var o = new JsonSerializerOptions
         {
             // WriteIndented = true,
-            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            Encoder = JavaScriptEncoder.Default,
             IncludeFields = true,
         };
 
@@ -29,17 +29,16 @@ public static class TestUtil
         o.Converters.Add(new LexedCell_Path_Converter());
         o.Converters.Add(new LexedCell_Header_Val_Converter());
         o.Converters.Add(new ConvertedPath_Converter());
-        o.Converters.Add(new AstResult_Node_Leaf_Converter());
-        o.Converters.Add(new AstResult_Node_Branch_Converter());
+        o.Converters.Add(new AstNode_Leaf_Converter());
+        o.Converters.Add(new AstNode_Branch_Converter());
+        o.Converters.Add(new AstNode_Error_Converter());
         o.Converters.Add(new JsonStrConverter());
         o.Converters.Add(new InputPathElmtConverter());
         o.Converters.Add(new ConvertedPathElmtConverter());
-        o.Converters.Add(new JsonValConverter());
         o.Converters.Add(new LexedCellConverter());
-        o.Converters.Add(new HeaderConverter());
-        o.Converters.Add(new AstResultConverter());
-        o.Converters.Add(new NodeConverter());
-        o.Converters.Add(new ErrorConverter());
+        
+        o.Converters.Add(new JsonValConverter());
+        o.Converters.Add(new AstNodeConverter());
 
         return o;
     }
@@ -119,7 +118,7 @@ public static class Temp
         //Assert.Equivalent(actualJson, expectedJson);
     }*/
 
-    static JsonVal.Str MakeJsonStr() => new("a"u8.ToImmutableArray());
+    static (string jsonCode, JsonVal.Str jsonStr) MakeJsonStr() => ("\"a\"", new("a"u8.ToImmutableArray()));
 
     static (string jsonCode, JsonVal.Any jsonAny) MakeJsonAny() =>
     (
@@ -127,15 +126,28 @@ public static class Temp
         new JsonVal.Any(JsonNode.Parse("{\"a\":1,\"b\":null}"))
     );
 
-    static InputPathElmt.ArrElmt MakeInputPathArrElmt() => new(ArrElmtKind.Plus);
-    static InputPathElmt.Key MakeInputPathKeyElmt() => new(MakeJsonStr());
+    static (string jsonCode, InputPathElmt.ArrElmt arrElmt) MakeInputPathArrElmt() =>
+        ("1", new InputPathElmt.ArrElmt(ArrElmtKind.Plus));
 
-    static (string expSerialized, LexedPath lexedPath) MakeLexedPath() =>
-    (
-        "[1,\"a\"]",
-        new(ImmutableArray.Create(MakeInputPathArrElmt() as InputPathElmt, MakeInputPathKeyElmt()))
-    );
-    
+    static (string jsonCode, InputPathElmt.Key keyElmt) MakeInputPathKeyElmt()
+    {
+        var (code, str) = MakeJsonStr();
+        return (code, new InputPathElmt.Key(str));
+    }
+
+    static (string jsonCode, LexedPath lexedPath) MakeLexedPath()
+    {
+        var t0 = MakeInputPathArrElmt();
+        var t1 = MakeInputPathKeyElmt();
+        return ($"[{t0.jsonCode},{t1.jsonCode}]", new(ImmutableArray.Create(t0.arrElmt as InputPathElmt, t1.keyElmt)));
+    }
+
+    static (string jsonCode, AstNode.Leaf nodeLeaf) MakeAstNodeLeaf()
+    {
+        var (expSerialized, jsonAny) = MakeJsonAny();
+        return ($@"{{""Type"":""Leaf"",""Val"":{expSerialized}}}", jsonAny);
+    }
+
     // TODO can remove
     [Fact]
     static void JsonAnySerializes()
@@ -146,8 +158,40 @@ public static class Temp
         var deserialized = JsonSerializer.Deserialize<JsonVal.Any>(serialized, TestUtil.GetJsonOptions());
         Assert.Equal(jsonAny, deserialized);
     }
+
+    [Fact]
+    static void JsonStrSerializes()
+    {
+        var strObj = new JsonVal.Str("&<>"u8.ToImmutableArray());
+        var jsonCode = "\"" + JavaScriptEncoder.Default.Encode("&<>") + "\"";
+        var serialized = JsonSerializer.Serialize(strObj, TestUtil.GetJsonOptions());
+        Assert.Equal(jsonCode, serialized);
+        var deserialized = JsonSerializer.Deserialize<JsonVal.Str>(serialized, TestUtil.GetJsonOptions());
+        Assert.Equal(strObj, deserialized);
+    }
     
-    // TODO can remove
+    [Fact]
+    static void JsonAnyAsJsonValSerializes()
+    {
+        (string jsonCode, JsonVal jsonAny) = MakeJsonAny();
+        jsonCode = $@"{{""Type"":""Any"",""Val"":{jsonCode}}}";
+        var serialized = JsonSerializer.Serialize(jsonAny, TestUtil.GetJsonOptions());
+        Assert.Equal(jsonCode, serialized);
+        var deserialized = JsonSerializer.Deserialize<JsonVal>(serialized, TestUtil.GetJsonOptions());
+        Assert.Equal(jsonAny, deserialized);
+    }
+
+    [Fact]
+    static void JsonStrAsJsonValSerializes()
+    {
+        (string jsonCode, JsonVal jsonStr) = MakeJsonStr();
+        jsonCode = $@"{{""Type"":""Str"",""Val"":{jsonCode}}}";
+        var serialized = JsonSerializer.Serialize(jsonStr, TestUtil.GetJsonOptions());
+        Assert.Equal(jsonCode, serialized);
+        var deserialized = JsonSerializer.Deserialize<JsonVal>(serialized, TestUtil.GetJsonOptions());
+        Assert.Equal(jsonStr, deserialized);
+    }
+    
     [Fact]
     static void LexedPathSerializes()
     {
@@ -159,26 +203,48 @@ public static class Temp
     }
 
     [Fact]
-    static void LexedCellPathSerializes()
+    static void LexedCellBlankSerializes()
     {
-        var (expSerialized, path) = MakeLexedPath();
-        LexedCell.Path cell = new LexedCell.Path(path);
+        LexedCell cell = new LexedCell.Blank();
         var serialized = JsonSerializer.Serialize(cell, TestUtil.GetJsonOptions());
-        Assert.Equal(expSerialized, serialized);
-        var deserialized = JsonSerializer.Deserialize<LexedCell.Path>(serialized, TestUtil.GetJsonOptions());
+        Assert.Equal(@"{""Type"":""Blank"",""Val"":{}}", serialized);
+        var deserialized = JsonSerializer.Deserialize<LexedCell.Blank>(serialized, TestUtil.GetJsonOptions());
         Assert.Equal(cell, deserialized);
     }
-
-    // TODO test for Mtx Header
+    
+    [Fact]
+    static void LexedCellPathSerializes()
+    {
+        var (expJson, path) = MakeLexedPath();
+        expJson = $@"{{""Type"":""Path"",""Val"":{expJson}}}";
+        LexedCell cell = new LexedCell.Path(path);
+        var serialized = JsonSerializer.Serialize(cell, TestUtil.GetJsonOptions());
+        Assert.Equal(expJson, serialized);
+        var deserialized = JsonSerializer.Deserialize<LexedCell>(serialized, TestUtil.GetJsonOptions());
+        Assert.Equal(cell, deserialized);
+    }
+    
     [Fact]
     static void LexedCellHeaderValSerializes()
     {
         var (jsonAnyCode, jsonAny) = MakeJsonAny();
-        LexedCell.Header header = new LexedCell.Header.Val(jsonAny);
+        LexedCell header = new LexedCell.Header.Val(jsonAny);
         var serialized = JsonSerializer.Serialize(header, TestUtil.GetJsonOptions());
-        var expJsonCode = @$"{{""Type"":""Val"",""Val"":{jsonAnyCode}}}";
+        var expJsonCode = @$"{{""Type"":""Header.Val"",""Val"":{jsonAnyCode}}}";
         Assert.Equal(expJsonCode, serialized);
-        var deserialized = JsonSerializer.Deserialize<LexedCell.Header>(serialized, TestUtil.GetJsonOptions());
+        var deserialized = JsonSerializer.Deserialize<LexedCell>(serialized, TestUtil.GetJsonOptions());
+        Assert.Equal(header, deserialized);
+    }
+    
+    [Fact]
+    static void LexedCellHeaderMtxSerializes()
+    {
+        LexedCell header = new LexedCell.Header.Mtx(MtxKind.Arr, false);
+        var innerJson = @"{""Kind"":0,""IsTp"":false}";
+        var expJsonCode = @$"{{""Type"":""Header.Mtx"",""Val"":{innerJson}}}";
+        var serialized = JsonSerializer.Serialize(header, TestUtil.GetJsonOptions());
+        Assert.Equal(expJsonCode, serialized);
+        var deserialized = JsonSerializer.Deserialize<LexedCell>(serialized, TestUtil.GetJsonOptions());
         Assert.Equal(header, deserialized);
     }
 
@@ -194,77 +260,40 @@ public static class Temp
         Assert.Equal(path, deserialized);
     }
     
-    // AstResult.Node.Leaf
-
-    static (string expSerialized, AstResult.Node.Leaf leaf) MakeAstResultNodeLeaf()
+    [Fact]
+    static void AstNodeLeafSerializes()
     {
-        var (expSerialized, jsonAny) = MakeJsonAny();
-        AstResult.Node.Leaf leaf = new(jsonAny);
-        return (expSerialized, jsonAny);
+        (string expJson, AstNode leaf) = MakeAstNodeLeaf();
+        var serialized = JsonSerializer.Serialize(leaf, TestUtil.GetJsonOptions());
+        Assert.Equal(expJson, serialized);
+        var deserialized = JsonSerializer.Deserialize<AstNode>(serialized, TestUtil.GetJsonOptions());
+        Assert.Equal(leaf, deserialized);
     }
 
     [Fact]
     static void AstResultNodeBranchSerializes()
     {
-        var (expLeafSzd, leaf) = MakeAstResultNodeLeaf();
+        var (expLeafSzd, leaf) = MakeAstNodeLeaf();
         var (expPathSzd, path) = MakeLexedPath();
-        AstResult.Node.Branch.Item item = new(path, leaf);
-        AstResult.Node.Branch branch = new(ImmutableArray.Create(item));
+        AstNode.Branch.Item item = new(path, leaf);
+        AstNode branch = new AstNode.Branch(ImmutableArray.Create(item));
         var serialized = JsonSerializer.Serialize(branch, TestUtil.GetJsonOptions());
-        var leafJson = $@"{{""Type"":""Node"",""Val"":{{""Type"":""Leaf"",""Val"":{expLeafSzd}}}}}";
-        var expJson = $@"[{{""Path"":{expPathSzd},""Result"":{leafJson}}}]";
+        var expInner = $@"[{{""Path"":{expPathSzd},""Result"":{expLeafSzd}}}]";
+        var expJson = @$"{{""Type"":""Branch"",""Val"":{expInner}}}";
         Assert.Equal(expJson, serialized);
-        var deserialized = JsonSerializer.Deserialize<AstResult.Node.Branch>(serialized, TestUtil.GetJsonOptions());
+        var deserialized = JsonSerializer.Deserialize<AstNode>(serialized, TestUtil.GetJsonOptions());
         Assert.Equal(branch, deserialized);
     }
-    
-    // JsonVal.Str
-    
-    // InputPathElmt
-    
-    // ConvertedPathElmt
-    
-    // TODO: JsonVal
-    
-    // TODO: LexedCell
-    
-    // TODO: LexedCell.Header
-    
-    // TODO: AstResult
-    
-    // TODO: AstResult.Node
-    
-    // TODO: AstResult.Error
 
     [Fact]
-    static void JsonStrSerializes()
+    static void AstResultErrorStrayCellSerializes()
     {
-        var jsonStr = MakeJsonStr();
-        var serialized = JsonSerializer.Serialize(jsonStr, TestUtil.GetJsonOptions());
-        Assert.Equal("\"a\"", serialized);
-        var deserialized = JsonSerializer.Deserialize<JsonVal.Str>(serialized, TestUtil.GetJsonOptions());
-        Assert.Equal(jsonStr, deserialized);
-    }
-
-    // TODO can remove
-    [Fact]
-    static void InputPathKeyElmtSerializes()
-    {
-        InputPathElmt key = new InputPathElmt.Key("a"u8.ToImmutableArray());
-        var serialized = JsonSerializer.Serialize(key, TestUtil.GetJsonOptions());
-        Assert.Equal("\"a\"", serialized);
-        var deserialized = JsonSerializer.Deserialize<InputPathElmt>(serialized, TestUtil.GetJsonOptions());
-        Assert.Equal(key, deserialized);
-    }
-    
-    // TODO can remove
-    [Fact]
-    static void InputPathArrElmtSerializes()
-    {
-        InputPathElmt arrElmt = new InputPathElmt.ArrElmt(ArrElmtKind.Plus);
-        var serialized = JsonSerializer.Serialize(arrElmt, TestUtil.GetJsonOptions());
-        Assert.Equal("1", serialized);
-        var deserialized = JsonSerializer.Deserialize<InputPathElmt>(serialized, TestUtil.GetJsonOptions());
-        Assert.Equal(arrElmt, deserialized);
+        var errMsg = "Error message";
+        var jsonCode = @$"{{""Type"":""Error"",""Val"":""{errMsg}""}}";
+        AstNode err = new AstNode.Error(errMsg);
+        var serialized = JsonSerializer.Serialize(err, TestUtil.GetJsonOptions());
+        Assert.Equal(jsonCode, serialized);
+        var deserialized = JsonSerializer.Deserialize<AstNode>(serialized, TestUtil.GetJsonOptions());
+        Assert.Equal(err, deserialized);
     }
 }

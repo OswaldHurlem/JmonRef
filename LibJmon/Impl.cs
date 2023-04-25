@@ -1,29 +1,16 @@
-﻿// TODO could use either real unions or replace abstract base classes with interfaces
-// TODO consider specializing "value object" types which have ImmutableArray<T> & using ReadOnlyMemory<T> instead
-
-using System.Buffers;
+﻿using System.Buffers;
 using System.Collections;
 using System.Collections.Immutable;
-using System.Diagnostics;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 using CommunityToolkit.HighPerformance;
-using CommunityToolkit.HighPerformance.Buffers;
 using OneOf;
 using OneOf.Types;
 
 namespace LibJmon.Impl;
 
 using ArrIdx = Int32;
-
-public interface IValueObject<TVal>
-{
-    TVal V { get; }
-}
 
 public interface IImplicitConversion<TSelf, TOther>
     where TSelf : IImplicitConversion<TSelf, TOther>
@@ -42,8 +29,6 @@ public interface IUnion<TBase, TDer1, TDer2, TDer3>
     where TDer1 : TBase
     where TDer2 : TBase
     where TDer3 : TBase { }
-
-// public interface IAsOneOf<T1, T2, T3> { OneOf<T1, T2, T3> AsOneOf(); }
 
 public static class UnionExt
 {
@@ -73,7 +58,6 @@ public static class UnionExt
             };
 }
 
-// internal readonly record struct Coord(int Row, int Col)
 public readonly record struct Coord(int Row, int Col)
 {
     public static Coord operator +(Coord a, Coord b) => new(a.Row + b.Row, a.Col + b.Col);
@@ -107,7 +91,6 @@ public static class CoordExt
     public static (int row, int col) ToTuple(this Coord c) => (c.Row, c.Col);
 }
 
-// internal readonly record struct Rect(Coord Beg, Coord End)
 public readonly record struct Rect(Coord Beg, Coord End)
 {
     public static implicit operator Rect((Coord beg, Coord end) t) => new(t.beg, t.end);
@@ -171,7 +154,6 @@ public readonly record struct LexedSubSheet(ReadOnlyMemory2D<LexedCell> NonTpose
     private ReadOnlySpan2D<LexedCell> NonTposedSpan => NonTposedMem.Span;
 
     public LexedCell this[Coord coord] => this[coord.Row, coord.Col];
-        
     
     public LexedCell this[int row, int col] =>
         IsTposed ? NonTposedSpan[col, row] : NonTposedSpan[row, col];
@@ -218,7 +200,7 @@ public static class LexedSubSheetExt
         Rect nonTpInnerRect = sheet.IsTposed ? innerRect.Tpose() : innerRect;
         var (rows, cols) = nonTpInnerRect.ToRanges();
 
-        // TODO post issue to Github
+        // https://github.com/CommunityToolkit/dotnet/issues/673
         var buggyRows = sheet.NonTposedMem.Height..sheet.NonTposedMem.Height;
         var buggyCols = sheet.NonTposedMem.Width..sheet.NonTposedMem.Width;
         if (rows.Equals(buggyRows)) { rows = 0..0; }
@@ -257,18 +239,17 @@ public static class LexedSubSheetExt
         (sheet.IsTposed ? outerCoord.SwizRC() : outerCoord) - sheet.OuterBeg;
 }
 
-public interface IToJsonDocument
-{
-    JsonDocument ToJsonDocument(JsonSerializerOptions options);
-}
+// public interface IToJsonDocument
+// {
+//     JsonDocument ToJsonDocument(JsonSerializerOptions options);
+// }
 
-public abstract record class JsonVal : IToJsonDocument, IUnion<JsonVal, JsonVal.Any, JsonVal.Str>
+public abstract record class JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str> // IToJsonDocument
 {
-    public sealed record class Any(JsonNode? V)
-        : JsonVal, IValueObject<JsonNode?>, IImplicitConversion<Any, JsonNode?>
+    public sealed record class Any(JsonNode? V) : JsonVal, IImplicitConversion<Any, JsonNode?>
     {
-        public override JsonDocument ToJsonDocument(JsonSerializerOptions options) =>
-            JsonSerializer.SerializeToDocument(V, options);
+        // public override JsonDocument ToJsonDocument(JsonSerializerOptions options) =>
+        //     JsonSerializer.SerializeToDocument(V, options);
 
         public static implicit operator Any(JsonNode? v) => new(v);
         public static implicit operator JsonNode?(Any v) => v.V;
@@ -277,26 +258,25 @@ public abstract record class JsonVal : IToJsonDocument, IUnion<JsonVal, JsonVal.
         public override int GetHashCode() => V?.ToJsonString()?.GetHashCode() ?? 0;
     }
     
-    public sealed record class Str(ImmutableArray<byte> V)
-        : JsonVal, IValueObject<ImmutableArray<byte>>, IImplicitConversion<Str, ImmutableArray<byte>>
+    public sealed record class Str(ImmutableArray<byte> V) : JsonVal, IImplicitConversion<Str, ImmutableArray<byte>>
     {
-        public override JsonDocument ToJsonDocument(JsonSerializerOptions options)
-        {
-            var writerOptions = new JsonWriterOptions
-            {
-                Encoder = options.Encoder,
-                Indented = options.WriteIndented,
-                MaxDepth = options.MaxDepth,
-                SkipValidation = true
-            };
-            
-            var bufferWriter = new ArrayBufferWriter<byte>(16);
-            using (Utf8JsonWriter jsonWriter = new(bufferWriter, writerOptions))
-            {
-                jsonWriter.WriteStringValue(V.AsSpan());
-            }
-            return JsonDocument.Parse(bufferWriter.WrittenMemory);
-        }
+        // public override JsonDocument ToJsonDocument(JsonSerializerOptions options)
+        // {
+        //     var writerOptions = new JsonWriterOptions
+        //     {
+        //         Encoder = options.Encoder,
+        //         Indented = options.WriteIndented,
+        //         MaxDepth = options.MaxDepth,
+        //         SkipValidation = true
+        //     };
+        //     
+        //     var bufferWriter = new ArrayBufferWriter<byte>(16);
+        //     using (Utf8JsonWriter jsonWriter = new(bufferWriter, writerOptions))
+        //     {
+        //         jsonWriter.WriteStringValue(V.AsSpan());
+        //     }
+        //     return JsonDocument.Parse(bufferWriter.WrittenMemory);
+        // }
         
         public static implicit operator Str(ImmutableArray<byte> v) => new(v);
         public static implicit operator ImmutableArray<byte>(Str v) => v.V;
@@ -304,8 +284,6 @@ public abstract record class JsonVal : IToJsonDocument, IUnion<JsonVal, JsonVal.
         public bool Equals(Str? other) => StructuralComparisons.StructuralEqualityComparer.Equals(V, other?.V);
         public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
     }
-    
-    public abstract JsonDocument ToJsonDocument(JsonSerializerOptions options);
 }
 
 public interface IPathElmt<TSelf> where TSelf : IPathElmt<TSelf>
@@ -321,15 +299,13 @@ public enum ArrElmtKind { Stop, Plus };
 public abstract record class InputPathElmt
     : IUnion<InputPathElmt, InputPathElmt.Key, InputPathElmt.ArrElmt>, IPathElmt<InputPathElmt>
 {
-    public sealed record class Key(JsonVal.Str V)
-        : InputPathElmt, IValueObject<JsonVal.Str>, IImplicitConversion<Key, JsonVal.Str>
+    public sealed record class Key(JsonVal.Str V) : InputPathElmt, IImplicitConversion<Key, JsonVal.Str>
     {
         public static implicit operator Key(JsonVal.Str s) => new(s);
         public static implicit operator JsonVal.Str(Key k) => k.V;
     }
 
-    public sealed record class ArrElmt(ArrElmtKind V)
-        : InputPathElmt, IValueObject<ArrElmtKind>, IImplicitConversion<ArrElmt, ArrElmtKind>
+    public sealed record class ArrElmt(ArrElmtKind V) : InputPathElmt, IImplicitConversion<ArrElmt, ArrElmtKind>
     {
         public static implicit operator ArrElmt(ArrElmtKind k) => new(k);
         public static implicit operator ArrElmtKind(ArrElmt k) => k.V;
@@ -344,7 +320,7 @@ public abstract record class InputPathElmt
 }
 
 public readonly record struct LexedPath(ImmutableArray<InputPathElmt> V)
-    : IValueObject<ImmutableArray<InputPathElmt>>, IImplicitConversion<LexedPath, ImmutableArray<InputPathElmt>>
+    : IImplicitConversion<LexedPath, ImmutableArray<InputPathElmt>>
 {
     public static LexedPath Empty { get; } = new(ImmutableArray<InputPathElmt>.Empty);
     
@@ -357,36 +333,27 @@ public readonly record struct LexedPath(ImmutableArray<InputPathElmt> V)
 
 public enum MtxKind { Arr, Obj };
 
-// enum CellKind { Empty = 0, Path = 1, Header = 2 };
 public enum CellKind { Empty = 0, Path = 1, Header = 2 };
 
-// TODO(later) enable JSON serialization
 public abstract record class LexedCell : IUnion<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.Header>
 {
-    public sealed record class Blank : LexedCell
-    {
-    }
+    public sealed record class Blank : LexedCell { }
 
-    public sealed record class Path(LexedPath V)
-        : LexedCell, IValueObject<LexedPath>, IImplicitConversion<Path, LexedPath>
+    public sealed record class Path(LexedPath V) : LexedCell, IImplicitConversion<Path, LexedPath>
     {
         public static implicit operator LexedPath(Path p) => p.V;
         public static implicit operator Path(LexedPath p) => new(p);
     }
 
-    public abstract record class Header
-        : LexedCell, IUnion<Header, Header.Val, Header.Mtx> //, IUnion<LexedCell, Blank, Path, Header>
+    public abstract record class Header : LexedCell, IUnion<Header, Header.Val, Header.Mtx>
     {
-        public sealed record class Val(JsonVal.Any V)
-            : Header, IValueObject<JsonVal.Any>, IImplicitConversion<Val, JsonVal.Any>
+        public sealed record class Val(JsonVal.Any V) : Header, IImplicitConversion<Val, JsonVal.Any>
         {
             public static implicit operator Val(JsonVal.Any v) => new(v);
             public static implicit operator JsonVal.Any(Val v) => v.V;
         }
 
-        public sealed record class Mtx(MtxKind kind, bool isTp) : Header
-        {
-        }
+        public sealed record class Mtx(MtxKind Kind, bool IsTp) : Header;
 
         public OneOf<Val, Mtx> AsOneOf() => (this as IUnion<Header, Val, Mtx>).AsOneOf();
     }
@@ -395,15 +362,13 @@ public abstract record class LexedCell : IUnion<LexedCell, LexedCell.Blank, Lexe
 public abstract record class ConvertedPathElmt
     : IUnion<ConvertedPathElmt, ConvertedPathElmt.Key, ConvertedPathElmt.Idx>, IPathElmt<ConvertedPathElmt>
 {
-    public sealed record class Key(JsonVal.Str V)
-        : ConvertedPathElmt, IValueObject<JsonVal.Str>, IImplicitConversion<Key, JsonVal.Str>
+    public sealed record class Key(JsonVal.Str V) : ConvertedPathElmt, IImplicitConversion<Key, JsonVal.Str>
     {
         public static implicit operator Key(JsonVal.Str s) => new(s);
         public static implicit operator JsonVal.Str(Key k) => k.V;
     }
 
-    public sealed record class Idx(ArrIdx V)
-        : ConvertedPathElmt, IValueObject<ArrIdx>, IImplicitConversion<Idx, ArrIdx>
+    public sealed record class Idx(ArrIdx V) : ConvertedPathElmt, IImplicitConversion<Idx, ArrIdx>
     {
         public static implicit operator Idx(ArrIdx i) => new(i);
         public static implicit operator ArrIdx(Idx i) => i.V;
@@ -417,8 +382,7 @@ public abstract record class ConvertedPathElmt
 }
 
 public readonly record struct ConvertedPath(ImmutableArray<ConvertedPathElmt> V)
-    : IValueObject<ImmutableArray<ConvertedPathElmt>>,
-        IImplicitConversion<ConvertedPath, ImmutableArray<ConvertedPathElmt>>
+    : IImplicitConversion<ConvertedPath, ImmutableArray<ConvertedPathElmt>>
 {
     public static ConvertedPath Empty { get; } = new(ImmutableArray<ConvertedPathElmt>.Empty);
 
@@ -433,53 +397,33 @@ public readonly record struct ConvertedPath(ImmutableArray<ConvertedPathElmt> V)
     public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
 }
 
-public abstract record class AstResult : IUnion<AstResult, AstResult.Node, AstResult.Error>
+public abstract record class AstNode : IUnion<AstNode, AstNode.Leaf, AstNode.Branch, AstNode.Error>
 {
-    public abstract record class Node : AstResult, IUnion<Node, Node.Leaf, Node.Branch>
+    public sealed record class Leaf(JsonVal.Any V) : AstNode, IImplicitConversion<Leaf, JsonVal.Any>
     {
-        public sealed record class Leaf(JsonVal.Any V)
-            : Node, IValueObject<JsonVal.Any>, IImplicitConversion<Leaf, JsonVal.Any>
-        {
-            public static implicit operator Leaf(JsonVal.Any v) => new(v);
-            public static implicit operator JsonVal.Any(Leaf l) => l.V;
-        }
-
-        public sealed record class Branch(ImmutableArray<Branch.Item> V)
-            : Node, IValueObject<ImmutableArray<Branch.Item>>, IImplicitConversion<Branch, ImmutableArray<Branch.Item>>
-        {
-            public readonly record struct Item(LexedPath Path, AstResult Result);
-            
-            public static Branch Empty => new(ImmutableArray<Item>.Empty);
-            public static implicit operator ImmutableArray<Item>(Branch from) => from.V;
-
-            public static implicit operator Branch(ImmutableArray<Item> to) => new(to);
-            
-            private IStructuralEquatable AsStructEq => V;
-            public bool Equals(Branch? other) => StructuralComparisons.StructuralEqualityComparer.Equals(V, other?.V);
-            public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
-        }
-        
-        public OneOf<Leaf, Branch> AsOneOf() => (this as IUnion<Node, Leaf, Branch>).AsOneOf();
+        public static implicit operator Leaf(JsonVal.Any v) => new(v);
+        public static implicit operator JsonVal.Any(Leaf l) => l.V;
     }
 
-    public abstract record class Error(Coord Coord) : AstResult, IUnion<Error, Error.StrayCell, Error.BadPathElmt>
+    public sealed record class Branch(ImmutableArray<Branch.Item> V)
+        : AstNode, IImplicitConversion<Branch, ImmutableArray<Branch.Item>>
     {
-        public sealed record class StrayCell(Coord Coord, Type StrayCellType) : Error(Coord)
-        {
-            public static StrayCell AtInnerCoord(LexedSubSheet sheet, Coord innerCoord) =>
-                new(sheet.ToOuter(innerCoord), sheet[innerCoord].GetType());
-
-            protected override OneOf<StrayCell, BadPathElmt> AsOneOfImpl2() => this;
-        }
+        public readonly record struct Item(LexedPath Path, AstNode Result);
         
-        // TODO consider removing?
-        public sealed record class BadPathElmt(Coord Coord, Type PathElmtType) : Error(Coord)
-        {
-            protected override OneOf<StrayCell, BadPathElmt> AsOneOfImpl2() => this;
-        }
+        public static Branch Empty => new(ImmutableArray<Item>.Empty);
+        public static implicit operator ImmutableArray<Item>(Branch from) => from.V;
 
-        public OneOf<StrayCell, BadPathElmt> AsOneOf() => (this as IUnion<Error, StrayCell, BadPathElmt>).AsOneOf();
-        protected abstract OneOf<StrayCell, BadPathElmt> AsOneOfImpl2();
+        public static implicit operator Branch(ImmutableArray<Item> to) => new(to);
+        
+        private IStructuralEquatable AsStructEq => V;
+        public bool Equals(Branch? other) => StructuralComparisons.StructuralEqualityComparer.Equals(V, other?.V);
+        public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
+    }
+
+    public sealed record class Error(string V) : AstNode, IImplicitConversion<Error, string>
+    {
+        public static implicit operator Error(string v) => new(v);
+        public static implicit operator string(Error e) => e.V;
     }
 }
 
@@ -498,39 +442,6 @@ public sealed class ConvertedPathComparer : IEqualityComparer<ConvertedPath>
 {
     public bool Equals(ConvertedPath pA, ConvertedPath pB) => pA.V.SequenceEqual(pB.V);
     public int GetHashCode(ConvertedPath p) => p.V.Aggregate(0, HashCode.Combine);
-}
-
-public sealed class AstResultComparer : IEqualityComparer<AstResult>
-{
-    public bool Equals(AstResult? rA, AstResult? rB)
-    {
-        ItemComparer ??= new BranchItemComparer(this);
-        return (rA, rB) switch {
-            (AstResult.Node.Branch bA, AstResult.Node.Branch bB) => bA.V.SequenceEqual(bB.V, ItemComparer),
-            _ => rA?.Equals(rB) ?? false
-        };
-    }
-    
-    public int GetHashCode(AstResult r) => r switch {
-        AstResult.Node.Branch b => b.V.Aggregate(0, HashCode.Combine),
-        _ => r.GetHashCode()
-    };
-
-    private IEqualityComparer<AstResult.Node.Branch.Item>? ItemComparer { get; set; } = null;
-    
-    private sealed record class BranchItemComparer(AstResultComparer RsltComparer)
-        : IEqualityComparer<AstResult.Node.Branch.Item>
-    {
-        public bool Equals(AstResult.Node.Branch.Item iA, AstResult.Node.Branch.Item iB) =>
-            iA.Path.V.SequenceEqual(iB.Path.V)
-            && RsltComparer.Equals(iA.Result, iB.Result);
-        
-        public int GetHashCode(AstResult.Node.Branch.Item i) =>
-            HashCode.Combine(
-                i.Path.V.Aggregate(0, HashCode.Combine),
-                RsltComparer.GetHashCode(i.Result)
-            );
-    }
 }
 
 public static class Logic
@@ -601,7 +512,7 @@ public static class Logic
     }
 
     // TODO return BadPathElmt
-    private static IEnumerable<AstResult.Node.Branch.Item> ParsePathCols(
+    private static IEnumerable<AstNode.Branch.Item> ParsePathCols(
         LexedSubSheet pathCols,
         LexedSubSheet pathRows,
         LexedSubSheet interior
@@ -615,7 +526,7 @@ public static class Logic
             foreach (var (path, begRow, endRow) in seq)
             {
                 var desc = ParsePathRows(pathRows, interior.SliceRows(begRow..endRow));
-                var prop = new AstResult.Node.Branch(desc.ToImmutableArray());
+                var prop = new AstNode.Branch(desc.ToImmutableArray());
                 yield return new(path, prop);
             }
             yield break;
@@ -624,12 +535,12 @@ public static class Logic
         foreach (var (path, begRow, endRow) in seq)
         {
             var desc = ParsePathCols(remCols.SliceRows(begRow..endRow), pathRows, interior.SliceRows(begRow..endRow));
-            var prop = new AstResult.Node.Branch(desc.ToImmutableArray());
+            var prop = new AstNode.Branch(desc.ToImmutableArray());
             yield return new(path, prop);
         }
     }
 
-    private static IEnumerable<AstResult.Node.Branch.Item> ParsePathRows(LexedSubSheet pathRows, LexedSubSheet interior)
+    private static IEnumerable<AstNode.Branch.Item> ParsePathRows(LexedSubSheet pathRows, LexedSubSheet interior)
     {
         var seq = GetPathRanges(pathRows.SliceRows(0..1).CellSeq().ToList());
         var remRows = pathRows.SliceRows(1..);
@@ -647,23 +558,28 @@ public static class Logic
         foreach (var (path, begCol, endCol) in seq)
         {
             var desc = ParsePathRows(remRows.SliceCols(begCol..endCol), interior.SliceCols(begCol..endCol));
-            var prop = new AstResult.Node.Branch(desc.ToImmutableArray());
+            var prop = new AstNode.Branch(desc.ToImmutableArray());
             yield return new(path, prop);
         }
     }
 
-    private static AstResult ParseMtx(LexedSubSheet subSheet) =>
-        ParseMtxToBranchOrError(subSheet).CastToBase(o => (AstResult)o);
-    
-    private static OneOf<AstResult.Node.Branch, AstResult.Error> ParseMtxToBranchOrError(LexedSubSheet subSheet)
+    private record StrayCell(Coord Coord, string Type);
+
+    private static AstNode.Error StrayCellAtInnerCoord(LexedSubSheet sheet, Coord innerCoord)
+    {
+        var obj = new StrayCell(sheet.ToOuter(innerCoord), sheet[innerCoord].GetType().Name);
+        return new AstNode.Error(obj.ToString());
+    }
+
+    private static AstNode ParseMtx(LexedSubSheet subSheet)
     {
         var (mtxKind, isTp) = (subSheet[0, 0] as LexedCell.Header.Mtx)!; 
         subSheet = isTp ? subSheet.Tpose() : subSheet;
 
-        AstResult.Error.StrayCell? FindStray(LexedSubSheet sheet, int skip, Func<LexedCell, bool> pred) =>
+        AstNode? FindStray(LexedSubSheet sheet, int skip, Func<LexedCell, bool> pred) =>
             sheet.CoordAndCellSeq().Skip(skip).Find(pred) switch
             {
-                Coord strayCoord => AstResult.Error.StrayCell.AtInnerCoord(sheet, strayCoord),
+                Coord strayCoord => StrayCellAtInnerCoord(sheet, strayCoord),
                 _ => null
             };
 
@@ -673,13 +589,13 @@ public static class Logic
             return FindStray(subSheet, 1, cell => cell is not LexedCell.Blank) switch
             {
                 { } strayInEmptyMtx => strayInEmptyMtx,
-                _ => AstResult.Node.Branch.Empty
+                _ => AstNode.Branch.Empty
             };
         }
 
         var pathColSearchRange = subSheet.SliceCols(0..pathRowBeg.Col).Tpose();
         var pathColBegOrNull = pathColSearchRange.CoordAndCellSeq().Find(cell => cell is LexedCell.Path);
-        if (pathColBegOrNull is not Coord pathColBeg) { return AstResult.Error.StrayCell.AtInnerCoord(subSheet, pathRowBeg); }
+        if (pathColBegOrNull is not Coord pathColBeg) { return StrayCellAtInnerCoord(subSheet, pathRowBeg); }
         pathColBeg = subSheet.ToInner(pathColSearchRange.ToOuter(pathColBeg));
 
         var ((margin, pathRows), (pathCols, interior)) = subSheet.Quarter((pathColBeg.Row, pathRowBeg.Col));
@@ -701,32 +617,32 @@ public static class Logic
         if (FindStrayCell(intPadTL, CellKind.Path, (0,0), out strayCell)) { return strayCell; }
         interior = newInterior;*/
 
-        return new AstResult.Node.Branch(ParsePathCols(pathCols, pathRows, interior).ToImmutableArray());
+        return new AstNode.Branch(ParsePathCols(pathCols, pathRows, interior).ToImmutableArray());
     }
 
-    public static OneOf<AstResult, None> ParseJmon(LexedSubSheet subSheet)
+    public static OneOf<AstNode, None> ParseJmon(LexedSubSheet subSheet)
     {
         var firstNonBlankOrNull = subSheet.CoordAndCellSeq().Find(cell => cell is not LexedCell.Blank);
         if (firstNonBlankOrNull is not Coord firstNonBlank) { return new None(); }
         
         if (subSheet[firstNonBlank] is not LexedCell.Header header)
         {
-            return AstResult.Error.StrayCell.AtInnerCoord(subSheet, firstNonBlank);
+            return StrayCellAtInnerCoord(subSheet, firstNonBlank);
         }
 
         var lower = subSheet.SliceRows(firstNonBlank.Row..);
         
         var left = lower.SliceCols(0..firstNonBlank.Col);
         var strayInLeftOrNull = left.CoordAndCellSeq().Find(cell => cell is not LexedCell.Blank);
-        if (strayInLeftOrNull is { } stray) { return AstResult.Error.StrayCell.AtInnerCoord(left, stray); }
+        if (strayInLeftOrNull is { } stray) { return StrayCellAtInnerCoord(left, stray); }
 
         var valRange = lower.SliceCols(firstNonBlank.Col..);
 
         return header.AsOneOf().Match(
             valCell => valRange.CoordAndCellSeq().Skip(1).Find(cell => cell is not LexedCell.Blank) switch
             {
-                { } strayCoord => AstResult.Error.StrayCell.AtInnerCoord(valRange, strayCoord),
-                _ => new AstResult.Node.Leaf(valCell.V)
+                { } strayCoord => StrayCellAtInnerCoord(valRange, strayCoord),
+                _ => new AstNode.Leaf(valCell.V)
             },
             mtxHeader => ParseMtx(valRange)
         );
@@ -948,4 +864,3 @@ public static class MoreLinq
         }
     }
 }
-
