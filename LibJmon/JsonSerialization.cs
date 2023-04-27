@@ -21,8 +21,11 @@ public abstract class ImplicitConverter<TObj, TConverted> : JsonConverter<TObj>
 
 public sealed class JsonAny_Converter : ImplicitConverter<JsonVal.Any, JsonNode?> { }
 public sealed class LexedPath_Converter : ImplicitConverter<LexedPath, ImmutableArray<InputPathElmt>> { }
+
 public sealed class LexedCell_Path_Converter : ImplicitConverter<LexedCell.Path, LexedPath> { }
-public sealed class LexedCell_Header_Val_Converter : ImplicitConverter<LexedCell.Header.Val, JsonVal.Any> { }
+public sealed class LexedCell_JVal_Converter : ImplicitConverter<LexedCell.JVal, JsonVal.Any> { }
+public sealed class LexedCell_Error_Converter : ImplicitConverter<LexedCell.Error, string> { }
+
 public sealed class ConvertedPath_Converter : ImplicitConverter<ConvertedPath, ImmutableArray<ConvertedPathElmt>> { }
 
 public sealed class AstNode_Leaf_Converter : ImplicitConverter<AstNode.Leaf, JsonVal.Any> { }
@@ -154,7 +157,61 @@ public abstract class UnionConverter<TBase, TDerived0, TDerived1, TDerived2> : J
     }
 }
 
-public sealed class LexedCellConverter : JsonConverter<LexedCell>
+public abstract class UnionConverter<TBase, TDer0, TDer1, TDer2, TDer3, TDer4> : JsonConverter<TBase>
+    where TBase : IUnion<TBase, TDer0, TDer1, TDer2, TDer3, TDer4>
+    where TDer0 : TBase
+    where TDer1 : TBase
+    where TDer2 : TBase
+    where TDer3 : TBase
+    where TDer4 : TBase
+{
+    private Dictionary<string, int> IdxFromName { get; } = new()
+    {
+        [typeof(TDer0).Name] = 0,
+        [typeof(TDer1).Name] = 1,
+        [typeof(TDer2).Name] = 2,
+        [typeof(TDer3).Name] = 3,
+        [typeof(TDer4).Name] = 4,
+    };
+
+    private string[] NameFromIdx { get; } =
+        new[] { typeof(TDer0).Name, typeof(TDer1).Name, typeof(TDer2).Name, typeof(TDer3).Name, typeof(TDer4).Name };
+    
+    public override TBase? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (JsonSerializer.Deserialize<NameAndNode>(ref reader, options) is (string name, JsonNode node))
+        {
+            return IdxFromName[name] switch
+            {
+                0 => node.Deserialize<TDer0>(options),
+                1 => node.Deserialize<TDer1>(options),
+                2 => node.Deserialize<TDer2>(options),
+                3 => node.Deserialize<TDer3>(options),
+                4 => node.Deserialize<TDer4>(options),
+                _ => throw new Exception(), // TODO
+            };
+        }
+
+        throw new Exception(); // TODO
+    }
+
+    public override void Write(Utf8JsonWriter writer, TBase value, JsonSerializerOptions options)
+    {
+        var (name, nodeOrNull) = value.AsOneOf().Match(
+            td0 => (NameFromIdx[0], JsonSerializer.SerializeToNode(td0, options)),
+            td1 => (NameFromIdx[1], JsonSerializer.SerializeToNode(td1, options)),
+            td2 => (NameFromIdx[2], JsonSerializer.SerializeToNode(td2, options)),
+            td3 => (NameFromIdx[3], JsonSerializer.SerializeToNode(td3, options)),
+            td4 => (NameFromIdx[4], JsonSerializer.SerializeToNode(td4, options))
+        );
+
+        if (nodeOrNull is null) { throw new Exception(); } // TODO
+        
+        JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull!), options);
+    }
+}
+
+/*public sealed class LexedCellConverter : JsonConverter<LexedCell>
 {
     const string nameBlank = $"{nameof(LexedCell.Blank)}";
     const string namePath = $"{nameof(LexedCell.Path)}";
@@ -193,7 +250,9 @@ public sealed class LexedCellConverter : JsonConverter<LexedCell>
         
         JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull!), options);
     }
-}
+}*/
 
+public sealed class LexedCellConverter
+    : UnionConverter<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead, LexedCell.Error> { }
 public sealed class JsonValConverter : UnionConverter<JsonVal, JsonVal.Any, JsonVal.Str> { }
 public sealed class AstNodeConverter : UnionConverter<AstNode, AstNode.Leaf, AstNode.Branch, AstNode.Error> { }

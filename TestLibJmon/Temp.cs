@@ -27,7 +27,8 @@ public static class TestUtil
         o.Converters.Add(new JsonAny_Converter());
         o.Converters.Add(new LexedPath_Converter());
         o.Converters.Add(new LexedCell_Path_Converter());
-        o.Converters.Add(new LexedCell_Header_Val_Converter());
+        o.Converters.Add(new LexedCell_JVal_Converter());
+        o.Converters.Add(new LexedCell_Error_Converter());
         o.Converters.Add(new ConvertedPath_Converter());
         o.Converters.Add(new AstNode_Leaf_Converter());
         o.Converters.Add(new AstNode_Branch_Converter());
@@ -35,8 +36,8 @@ public static class TestUtil
         o.Converters.Add(new JsonStrConverter());
         o.Converters.Add(new InputPathElmtConverter());
         o.Converters.Add(new ConvertedPathElmtConverter());
-        o.Converters.Add(new LexedCellConverter());
         
+        o.Converters.Add(new LexedCellConverter());
         o.Converters.Add(new JsonValConverter());
         o.Converters.Add(new AstNodeConverter());
 
@@ -225,23 +226,23 @@ public static class Temp
     }
     
     [Fact]
-    static void LexedCellHeaderValSerializes()
+    static void LexedCellJValSerializes()
     {
         var (jsonAnyCode, jsonAny) = MakeJsonAny();
-        LexedCell header = new LexedCell.Header.Val(jsonAny);
+        LexedCell header = new LexedCell.JVal(jsonAny);
         var serialized = JsonSerializer.Serialize(header, TestUtil.GetJsonOptions());
-        var expJsonCode = @$"{{""Type"":""Header.Val"",""Val"":{jsonAnyCode}}}";
+        var expJsonCode = @$"{{""Type"":""JVal"",""Val"":{jsonAnyCode}}}";
         Assert.Equal(expJsonCode, serialized);
         var deserialized = JsonSerializer.Deserialize<LexedCell>(serialized, TestUtil.GetJsonOptions());
         Assert.Equal(header, deserialized);
     }
     
     [Fact]
-    static void LexedCellHeaderMtxSerializes()
+    static void LexedCellMtxHeadSerializes()
     {
-        LexedCell header = new LexedCell.Header.Mtx(MtxKind.Arr, false);
+        LexedCell header = new LexedCell.MtxHead(MtxKind.Arr, false);
         var innerJson = @"{""Kind"":0,""IsTp"":false}";
-        var expJsonCode = @$"{{""Type"":""Header.Mtx"",""Val"":{innerJson}}}";
+        var expJsonCode = @$"{{""Type"":""MtxHead"",""Val"":{innerJson}}}";
         var serialized = JsonSerializer.Serialize(header, TestUtil.GetJsonOptions());
         Assert.Equal(expJsonCode, serialized);
         var deserialized = JsonSerializer.Deserialize<LexedCell>(serialized, TestUtil.GetJsonOptions());

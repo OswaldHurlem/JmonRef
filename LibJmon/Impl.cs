@@ -1,10 +1,17 @@
 ﻿using System.Buffers;
 using System.Collections;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using CommunityToolkit.HighPerformance;
+using LibJmon.Linq;
+using LibJmon.Sheets;
+using LibJmon.SuperTypes;
+using LibJmon.Types;
+using Microsoft.VisualBasic.FileIO;
 using OneOf;
 using OneOf.Types;
 
@@ -12,400 +19,47 @@ namespace LibJmon.Impl;
 
 using ArrIdx = Int32;
 
-public interface IImplicitConversion<TSelf, TOther>
-    where TSelf : IImplicitConversion<TSelf, TOther>
+public abstract record LexedCell
+    : IUnion<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead, LexedCell.Error>
 {
-    static abstract implicit operator TOther(TSelf from);
-    static abstract implicit operator TSelf(TOther to);
-}
+    public sealed record Blank : LexedCell { }
 
-public interface IUnion<TBase, TDer1, TDer2>
-    where TBase : IUnion<TBase, TDer1, TDer2>
-    where TDer1 : TBase
-    where TDer2 : TBase { }
-
-public interface IUnion<TBase, TDer1, TDer2, TDer3>
-    where TBase : IUnion<TBase, TDer1, TDer2, TDer3>
-    where TDer1 : TBase
-    where TDer2 : TBase
-    where TDer3 : TBase { }
-
-public static class UnionExt
-{
-    public static OneOf<TDerived1, TDerived2>
-        AsOneOf<TObj, TDerived1, TDerived2>(this IUnion<TObj, TDerived1, TDerived2> obj)
-        where TObj : IUnion<TObj, TDerived1, TDerived2> 
-        where TDerived1 : TObj where TDerived2 : TObj =>
-            obj switch
-            {
-                TDerived1 t1 => t1,
-                TDerived2 t2 => t2,
-                _ => throw new Exception(),
-            };
-    
-    public static OneOf<TDerived1, TDerived2, TDerived3>
-        AsOneOf<TObj, TDerived1, TDerived2, TDerived3>(this IUnion<TObj, TDerived1, TDerived2, TDerived3> obj)
-        where TObj : IUnion<TObj, TDerived1, TDerived2, TDerived3>
-        where TDerived1 : TObj
-        where TDerived2 : TObj
-        where TDerived3 : TObj =>
-            obj switch
-            {
-                TDerived1 t1 => t1,
-                TDerived2 t2 => t2,
-                TDerived3 t3 => t3,
-                _ => throw new Exception(),
-            };
-}
-
-public readonly record struct Coord(int Row, int Col)
-{
-    public static Coord operator +(Coord a, Coord b) => new(a.Row + b.Row, a.Col + b.Col);
-    public static Coord operator -(Coord a, Coord b) => new(a.Row - b.Row, a.Col - b.Col);
-
-    public static implicit operator Coord((int row, int col) t) => new(t.row, t.col);
-    public static implicit operator (int row, int col)(Coord c) => c.ToTuple();
-    public static Coord Invalid => new Coord(int.MinValue, int.MinValue);
-
-    public static Coord FromIndices((Index row, Index col) t, Coord outerEnd) =>
-        new(t.row.GetOffset(outerEnd.Row), t.col.GetOffset(outerEnd.Col));
-
-    public static Coord Of00 => (0, 0);
-    public static Coord Of01 => (0, 1);
-    public static Coord Of10 => (1, 0);
-    public static Coord Of11 => (1, 1);
-}
-
-public static class CoordExt
-{
-    public static Coord Swiz00(this Coord c) => Coord.Of00;
-    public static Coord Swiz0C(this Coord c) => (0, c.Col);
-    public static Coord Swiz0R(this Coord c) => (0, c.Row);
-    public static Coord SwizC0(this Coord c) => (c.Col, 0);
-    public static Coord SwizCC(this Coord c) => (c.Col, c.Col);
-    public static Coord SwizCR(this Coord c) => (c.Col, c.Row);
-    public static Coord SwizR0(this Coord c) => (c.Row, 0);
-    public static Coord SwizRC(this Coord c) => (c.Row, c.Col);
-    public static Coord SwizRR(this Coord c) => (c.Row, c.Row);
-    
-    public static (int row, int col) ToTuple(this Coord c) => (c.Row, c.Col);
-}
-
-public readonly record struct Rect(Coord Beg, Coord End)
-{
-    public static implicit operator Rect((Coord beg, Coord end) t) => new(t.beg, t.end);
-    public static implicit operator (Coord beg, Coord end)(Rect r) => (r.Beg, r.End);
-
-    public static Rect FromRanges(Range rowRange, Range colRange, Coord outerEnd)
-    {
-        var beg = Coord.FromIndices((rowRange.Start, colRange.Start), outerEnd);
-        var end = Coord.FromIndices((rowRange.End, colRange.End), outerEnd);
-        return new Rect(beg, end);
-    }
-}
-
-public static class RectExt
-{
-    public static Rect Tpose(this Rect r) => (r.Beg.SwizCR(), r.End.SwizCR());
-    
-    public readonly record struct Quartering((Rect l, Rect r) T, (Rect l, Rect r) B);
-    
-    public static Quartering Quarter(this Rect r, Coord brBeg) =>
-        new(
-            (((r.Beg.Row, r.Beg.Col), (brBeg.Row, brBeg.Col)), ((r.Beg.Row, brBeg.Col), (brBeg.Row, r.End.Col))),
-            (((brBeg.Row, r.Beg.Col), (r.End.Row, brBeg.Col)), ((brBeg.Row, brBeg.Col), (r.End.Row, r.End.Col)))
-        );
-
-
-    public static Coord Dims(this Rect r) => r.End - r.Beg;
-
-    public static int Area(this Rect r) => r.Dims().Row * r.Dims().Col;
-
-    public static bool IsEmpty(this Rect r) => (r.Beg.Row == r.End.Row) || (r.Beg.Col == r.End.Col);
-    
-    public static IEnumerable<Coord> CoordSeq(this Rect r)
-    {
-        var (beg, end) = r;
-        for (var row = beg.Row; row < end.Row; row++) {
-            for (var col = beg.Col; col < end.Col; col++) {
-                yield return new Coord(row, col);
-            }
-        }
-    }
-
-    public static IEnumerable<Coord> CoordSeq(this Rect r, Coord first) =>
-        r.CoordSeq().SkipWhile(c => c != first);
-
-    public static IEnumerable<Coord> CoordSeq(this Rect r, Coord first, Coord last) =>
-        r.CoordSeq().SkipWhile(c => c != first).TakeWhile(c => c != last);
-    
-    public static (Range rows, Range cols) ToRanges(this Rect r) => (r.Beg.Row..r.End.Row, r.Beg.Col..r.End.Col);
-}
-
-static class Util
-{
-    public static OneOf<T, None> AsOneOfNone<T>(this T? t)  => t is { } val ? val : new None();
-}
-
-// internal readonly record struct LexedSubSheet(ReadOnlyMemory2D<LexedCell> NonTposedMem, Coord OuterBeg, bool IsTposed)
-public readonly record struct LexedSubSheet(ReadOnlyMemory2D<LexedCell> NonTposedMem, Coord OuterBeg, bool IsTposed)
-{
-    // TODO move to Ext?
-    private ReadOnlySpan2D<LexedCell> NonTposedSpan => NonTposedMem.Span;
-
-    public LexedCell this[Coord coord] => this[coord.Row, coord.Col];
-    
-    public LexedCell this[int row, int col] =>
-        IsTposed ? NonTposedSpan[col, row] : NonTposedSpan[row, col];
-
-    private Coord NonTposedEnd => new Coord(NonTposedMem.Height, NonTposedMem.Width);
-    
-    // public Coord End => new Coord(Memory.Height, Memory.Width);
-    public Coord End => IsTposed ? NonTposedEnd.SwizCR() : NonTposedEnd;
-
-    public Rect Rect => (Coord.Of00, End);
-    
-    private Rect NonTposedRect => (Coord.Of00, NonTposedEnd);
-
-    private bool PrintMembers(StringBuilder builder)
-    {
-        builder.Append(
-           $"{nameof(NonTposedMem)} = {NonTposedMem}, " +
-           $"{nameof(OuterBeg)} = {OuterBeg}, " +
-           $"{nameof(IsTposed)} = {IsTposed}"
-        );
-        return true;
-    }
-}
-
-public static class LexedSubSheetExt
-{
-    public static IEnumerable<(Coord coord, LexedCell cell)> CoordAndCellSeq(this LexedSubSheet sheet) =>
-        sheet.Rect.CoordSeq().Select(c => (c, sheet[c]));
-    public static IEnumerable<(Coord coord, LexedCell cell)> CoordAndCellSeq(this LexedSubSheet sheet, Coord first) =>
-        sheet.Rect.CoordSeq(first).Select(c => (c, sheet[c]));
-    public static IEnumerable<(Coord coord, LexedCell cell)>
-        CoordAndCellSeq(this LexedSubSheet sheet, Coord first, Coord last) =>
-            sheet.Rect.CoordSeq(first, last).Select(c => (c, sheet[c]));
-
-    public static IEnumerable<LexedCell> CellSeq(this LexedSubSheet sheet) =>
-        sheet.Rect.CoordSeq().Select(c => sheet[c]);
-    public static IEnumerable<LexedCell> CellSeq(this LexedSubSheet sheet, Coord first) =>
-        sheet.Rect.CoordSeq(first).Select(c => sheet[c]);
-    public static IEnumerable<LexedCell> CellSeq(this LexedSubSheet sheet, Coord first, Coord last) =>
-        sheet.Rect.CoordSeq(first, last).Select(c => sheet[c]);
-    
-    public static LexedSubSheet Slice(this LexedSubSheet sheet, Rect innerRect)
-    {
-        Rect nonTpInnerRect = sheet.IsTposed ? innerRect.Tpose() : innerRect;
-        var (rows, cols) = nonTpInnerRect.ToRanges();
-
-        // https://github.com/CommunityToolkit/dotnet/issues/673
-        var buggyRows = sheet.NonTposedMem.Height..sheet.NonTposedMem.Height;
-        var buggyCols = sheet.NonTposedMem.Width..sheet.NonTposedMem.Width;
-        if (rows.Equals(buggyRows)) { rows = 0..0; }
-        if (cols.Equals(buggyCols)) { cols = 0..0; }
-
-        return new LexedSubSheet(sheet.NonTposedMem[rows, cols], sheet.OuterBeg + nonTpInnerRect.Beg, sheet.IsTposed);
-    }
-    
-    public static LexedSubSheet Slice(this LexedSubSheet sheet, Range rowRange, Range colRange) =>
-        sheet.Slice(Rect.FromRanges(rowRange, colRange, sheet.End));
-    
-    public readonly record struct Quartering(
-        (LexedSubSheet l, LexedSubSheet r) T,
-        (LexedSubSheet l, LexedSubSheet r) B
-    );
-
-    public static Quartering Quarter(this LexedSubSheet sheet, Coord brBeg)
-    {
-        var ((tl, tr), (bl, br)) = sheet.Rect.Quarter(brBeg);
-        return new Quartering(
-            (sheet.Slice(tl), sheet.Slice(tr)),
-            (sheet.Slice(bl), sheet.Slice(br))
-        );
-    }
-
-    public static LexedSubSheet SliceCols(this LexedSubSheet sheet, Range colRange) => sheet.Slice(Range.All, colRange);
-    public static LexedSubSheet SliceRows(this LexedSubSheet sheet, Range rowRange) => sheet.Slice(rowRange, Range.All);
-    
-    public static LexedSubSheet Tpose(this LexedSubSheet sheet) =>
-        new(sheet.NonTposedMem, sheet.OuterBeg, !sheet.IsTposed);
-
-    public static Coord ToOuter(this LexedSubSheet sheet, Coord localCoord) =>
-        sheet.OuterBeg + (sheet.IsTposed ? localCoord.SwizCR() : localCoord);
-
-    public static Coord ToInner(this LexedSubSheet sheet, Coord outerCoord) =>
-        (sheet.IsTposed ? outerCoord.SwizRC() : outerCoord) - sheet.OuterBeg;
-}
-
-// public interface IToJsonDocument
-// {
-//     JsonDocument ToJsonDocument(JsonSerializerOptions options);
-// }
-
-public abstract record class JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str> // IToJsonDocument
-{
-    public sealed record class Any(JsonNode? V) : JsonVal, IImplicitConversion<Any, JsonNode?>
-    {
-        // public override JsonDocument ToJsonDocument(JsonSerializerOptions options) =>
-        //     JsonSerializer.SerializeToDocument(V, options);
-
-        public static implicit operator Any(JsonNode? v) => new(v);
-        public static implicit operator JsonNode?(Any v) => v.V;
-
-        public bool Equals(Any? other) => V?.ToJsonString() == other.V?.ToJsonString();
-        public override int GetHashCode() => V?.ToJsonString()?.GetHashCode() ?? 0;
-    }
-    
-    public sealed record class Str(ImmutableArray<byte> V) : JsonVal, IImplicitConversion<Str, ImmutableArray<byte>>
-    {
-        // public override JsonDocument ToJsonDocument(JsonSerializerOptions options)
-        // {
-        //     var writerOptions = new JsonWriterOptions
-        //     {
-        //         Encoder = options.Encoder,
-        //         Indented = options.WriteIndented,
-        //         MaxDepth = options.MaxDepth,
-        //         SkipValidation = true
-        //     };
-        //     
-        //     var bufferWriter = new ArrayBufferWriter<byte>(16);
-        //     using (Utf8JsonWriter jsonWriter = new(bufferWriter, writerOptions))
-        //     {
-        //         jsonWriter.WriteStringValue(V.AsSpan());
-        //     }
-        //     return JsonDocument.Parse(bufferWriter.WrittenMemory);
-        // }
-        
-        public static implicit operator Str(ImmutableArray<byte> v) => new(v);
-        public static implicit operator ImmutableArray<byte>(Str v) => v.V;
-
-        public bool Equals(Str? other) => StructuralComparisons.StructuralEqualityComparer.Equals(V, other?.V);
-        public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
-    }
-}
-
-public interface IPathElmt<TSelf> where TSelf : IPathElmt<TSelf>
-{
-    public static abstract TSelf FromStr(JsonVal.Str s);
-    public static abstract TSelf FromInt(int i);
-
-    public OneOf<JsonVal.Str, int> ToStrOrInt();
-}
-
-public enum ArrElmtKind { Stop, Plus };
-
-public abstract record class InputPathElmt
-    : IUnion<InputPathElmt, InputPathElmt.Key, InputPathElmt.ArrElmt>, IPathElmt<InputPathElmt>
-{
-    public sealed record class Key(JsonVal.Str V) : InputPathElmt, IImplicitConversion<Key, JsonVal.Str>
-    {
-        public static implicit operator Key(JsonVal.Str s) => new(s);
-        public static implicit operator JsonVal.Str(Key k) => k.V;
-    }
-
-    public sealed record class ArrElmt(ArrElmtKind V) : InputPathElmt, IImplicitConversion<ArrElmt, ArrElmtKind>
-    {
-        public static implicit operator ArrElmt(ArrElmtKind k) => new(k);
-        public static implicit operator ArrElmtKind(ArrElmt k) => k.V;
-    }
-
-    static InputPathElmt IPathElmt<InputPathElmt>.FromStr(JsonVal.Str s) => new Key(s);
-
-    static InputPathElmt IPathElmt<InputPathElmt>.FromInt(int i) => new ArrElmt((ArrElmtKind)i);
-
-    OneOf<JsonVal.Str, int> IPathElmt<InputPathElmt>.ToStrOrInt() =>
-        this.AsOneOf().MapT0(k => k.V).MapT1(a => (int)a.V);
-}
-
-public readonly record struct LexedPath(ImmutableArray<InputPathElmt> V)
-    : IImplicitConversion<LexedPath, ImmutableArray<InputPathElmt>>
-{
-    public static LexedPath Empty { get; } = new(ImmutableArray<InputPathElmt>.Empty);
-    
-    public static implicit operator ImmutableArray<InputPathElmt>(LexedPath from) => from.V;
-    public static implicit operator LexedPath(ImmutableArray<InputPathElmt> to) => new(to);
-
-    public bool Equals(LexedPath other) => StructuralComparisons.StructuralEqualityComparer.Equals(V, other.V);
-    public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
-}
-
-public enum MtxKind { Arr, Obj };
-
-public enum CellKind { Empty = 0, Path = 1, Header = 2 };
-
-public abstract record class LexedCell : IUnion<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.Header>
-{
-    public sealed record class Blank : LexedCell { }
-
-    public sealed record class Path(LexedPath V) : LexedCell, IImplicitConversion<Path, LexedPath>
+    public sealed record Path(LexedPath V) : LexedCell, IImplicitConversion<Path, LexedPath>
     {
         public static implicit operator LexedPath(Path p) => p.V;
         public static implicit operator Path(LexedPath p) => new(p);
     }
 
-    public abstract record class Header : LexedCell, IUnion<Header, Header.Val, Header.Mtx>
+    public sealed record JVal(JsonVal.Any V) : LexedCell, IImplicitConversion<JVal, JsonVal.Any>
     {
-        public sealed record class Val(JsonVal.Any V) : Header, IImplicitConversion<Val, JsonVal.Any>
-        {
-            public static implicit operator Val(JsonVal.Any v) => new(v);
-            public static implicit operator JsonVal.Any(Val v) => v.V;
-        }
-
-        public sealed record class Mtx(MtxKind Kind, bool IsTp) : Header;
-
-        public OneOf<Val, Mtx> AsOneOf() => (this as IUnion<Header, Val, Mtx>).AsOneOf();
-    }
-}
-
-public abstract record class ConvertedPathElmt
-    : IUnion<ConvertedPathElmt, ConvertedPathElmt.Key, ConvertedPathElmt.Idx>, IPathElmt<ConvertedPathElmt>
-{
-    public sealed record class Key(JsonVal.Str V) : ConvertedPathElmt, IImplicitConversion<Key, JsonVal.Str>
-    {
-        public static implicit operator Key(JsonVal.Str s) => new(s);
-        public static implicit operator JsonVal.Str(Key k) => k.V;
+        public static implicit operator JsonVal.Any(JVal v) => v.V;
+        public static implicit operator JVal(JsonVal.Any v) => new(v);
     }
 
-    public sealed record class Idx(ArrIdx V) : ConvertedPathElmt, IImplicitConversion<Idx, ArrIdx>
+    public sealed record MtxHead(MtxKind Kind, bool IsTp) : LexedCell;
+
+    public sealed record Error(string V) : LexedCell, IImplicitConversion<Error, string>
     {
-        public static implicit operator Idx(ArrIdx i) => new(i);
-        public static implicit operator ArrIdx(Idx i) => i.V;
+        public static implicit operator string(Error e) => e.V;
+        public static implicit operator Error(string e) => new(e);
     }
-    
-    static ConvertedPathElmt IPathElmt<ConvertedPathElmt>.FromStr(JsonVal.Str s) => new Key(s);
-    static ConvertedPathElmt IPathElmt<ConvertedPathElmt>.FromInt(int i) => new Idx((ArrIdx)i);
-    
-    OneOf<JsonVal.Str, int> IPathElmt<ConvertedPathElmt>.ToStrOrInt() =>
-        this.AsOneOf().MapT0(k => k.V).MapT1(a => (int)a.V);
+
+    public bool IsHeader() => this switch
+    {
+        MtxHead or JVal => true,
+        _ => false
+    };
 }
 
-public readonly record struct ConvertedPath(ImmutableArray<ConvertedPathElmt> V)
-    : IImplicitConversion<ConvertedPath, ImmutableArray<ConvertedPathElmt>>
+public abstract record AstNode : IUnion<AstNode, AstNode.Leaf, AstNode.Branch, AstNode.Error>
 {
-    public static ConvertedPath Empty { get; } = new(ImmutableArray<ConvertedPathElmt>.Empty);
-
-    /*public string ToJsonPath() =>
-        string.Join("", V.Select(elmt => elmt.AsOneOf().Match(key => $".{key.V}", idx => $"[{idx}]")));*/
-    
-    public static implicit operator ImmutableArray<ConvertedPathElmt>(ConvertedPath from) => from.V;
-    public static implicit operator ConvertedPath(ImmutableArray<ConvertedPathElmt> to) => new(to);
-    
-    private IStructuralEquatable AsStructEq => V;
-    public bool Equals(ConvertedPath other) => StructuralComparisons.StructuralEqualityComparer.Equals(V, other.V);
-    public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
-}
-
-public abstract record class AstNode : IUnion<AstNode, AstNode.Leaf, AstNode.Branch, AstNode.Error>
-{
-    public sealed record class Leaf(JsonVal.Any V) : AstNode, IImplicitConversion<Leaf, JsonVal.Any>
+    public sealed record Leaf(JsonVal.Any V) : AstNode, IImplicitConversion<Leaf, JsonVal.Any>
     {
         public static implicit operator Leaf(JsonVal.Any v) => new(v);
         public static implicit operator JsonVal.Any(Leaf l) => l.V;
     }
 
-    public sealed record class Branch(ImmutableArray<Branch.Item> V)
+    public sealed record Branch(ImmutableArray<Branch.Item> V)
         : AstNode, IImplicitConversion<Branch, ImmutableArray<Branch.Item>>
     {
         public readonly record struct Item(LexedPath Path, AstNode Result);
@@ -420,7 +74,7 @@ public abstract record class AstNode : IUnion<AstNode, AstNode.Leaf, AstNode.Bra
         public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
     }
 
-    public sealed record class Error(string V) : AstNode, IImplicitConversion<Error, string>
+    public sealed record Error(string V) : AstNode, IImplicitConversion<Error, string>
     {
         public static implicit operator Error(string v) => new(v);
         public static implicit operator string(Error e) => e.V;
@@ -430,13 +84,6 @@ public abstract record class AstNode : IUnion<AstNode, AstNode.Leaf, AstNode.Bra
 // internal readonly record struct Assignment(ConvertedPath Path, JsonVal Value);
 
 // internal readonly record struct LexedValSeq(IReadOnlyList<OneOf<JsonVal, None>> Vals);
-
-public static class SeqExt
-{
-    public static TCoord? Find<TCoord,TObj>(this IEnumerable<(TCoord coord, TObj val)> seq, Func<TObj, bool> pred)
-        where TCoord : struct =>
-            seq.Select(t => (coord: (TCoord?)t.coord, t.val)).FirstOrDefault(t => pred(t.val)).coord;
-}
 
 public sealed class ConvertedPathComparer : IEqualityComparer<ConvertedPath>
 {
@@ -512,11 +159,8 @@ public static class Logic
     }
 
     // TODO return BadPathElmt
-    private static IEnumerable<AstNode.Branch.Item> ParsePathCols(
-        LexedSubSheet pathCols,
-        LexedSubSheet pathRows,
-        LexedSubSheet interior
-        )
+    private static IEnumerable<AstNode.Branch.Item>
+        ParsePathCols(SubSheet<LexedCell> pathCols, SubSheet<LexedCell> pathRows, SubSheet<LexedCell> interior)
     {
         var seq = GetPathRanges(pathCols.SliceCols(0..1).CellSeq().ToList());
         var remCols = pathCols.SliceCols(1..);
@@ -540,7 +184,8 @@ public static class Logic
         }
     }
 
-    private static IEnumerable<AstNode.Branch.Item> ParsePathRows(LexedSubSheet pathRows, LexedSubSheet interior)
+    private static IEnumerable<AstNode.Branch.Item>
+        ParsePathRows(SubSheet<LexedCell> pathRows, SubSheet<LexedCell> interior)
     {
         var seq = GetPathRanges(pathRows.SliceRows(0..1).CellSeq().ToList());
         var remRows = pathRows.SliceRows(1..);
@@ -565,18 +210,18 @@ public static class Logic
 
     private record StrayCell(Coord Coord, string Type);
 
-    private static AstNode.Error StrayCellAtInnerCoord(LexedSubSheet sheet, Coord innerCoord)
+    private static AstNode.Error StrayCellAtInnerCoord(SubSheet<LexedCell> sheet, Coord innerCoord)
     {
         var obj = new StrayCell(sheet.ToOuter(innerCoord), sheet[innerCoord].GetType().Name);
         return new AstNode.Error(obj.ToString());
     }
 
-    private static AstNode ParseMtx(LexedSubSheet subSheet)
+    private static AstNode ParseMtx(SubSheet<LexedCell> subSheet)
     {
-        var (mtxKind, isTp) = (subSheet[0, 0] as LexedCell.Header.Mtx)!; 
+        var (mtxKind, isTp) = (subSheet[0, 0] as LexedCell.MtxHead)!; 
         subSheet = isTp ? subSheet.Tpose() : subSheet;
 
-        AstNode? FindStray(LexedSubSheet sheet, int skip, Func<LexedCell, bool> pred) =>
+        AstNode? FindStray(SubSheet<LexedCell> sheet, int skip, Func<LexedCell, bool> pred) =>
             sheet.CoordAndCellSeq().Skip(skip).Find(pred) switch
             {
                 Coord strayCoord => StrayCellAtInnerCoord(sheet, strayCoord),
@@ -599,10 +244,10 @@ public static class Logic
         pathColBeg = subSheet.ToInner(pathColSearchRange.ToOuter(pathColBeg));
 
         var ((margin, pathRows), (pathCols, interior)) = subSheet.Quarter((pathColBeg.Row, pathRowBeg.Col));
-
+        
         if (FindStray(margin, 1, cell => cell is not LexedCell.Blank) is {} strayInMargin) { return strayInMargin; }
-        if (FindStray(pathRows, 0, cell => cell is LexedCell.Header) is {} strayInPathRows) { return strayInPathRows; }
-        if (FindStray(pathCols, 0, cell => cell is LexedCell.Header) is {} strayInPathCols) { return strayInPathCols; }
+        if (FindStray(pathRows, 0, cell => cell.IsHeader()) is {} strayInPathRows) { return strayInPathRows; }
+        if (FindStray(pathCols, 0, cell => cell.IsHeader()) is {} strayInPathCols) { return strayInPathCols; }
         
         pathRows = pathRows.SliceRows(pathRowBeg.Row..);
         pathCols = pathCols.SliceCols(pathColBeg.Col..);
@@ -620,12 +265,12 @@ public static class Logic
         return new AstNode.Branch(ParsePathCols(pathCols, pathRows, interior).ToImmutableArray());
     }
 
-    public static OneOf<AstNode, None> ParseJmon(LexedSubSheet subSheet)
+    public static OneOf<AstNode, None> ParseJmon(SubSheet<LexedCell> subSheet)
     {
         var firstNonBlankOrNull = subSheet.CoordAndCellSeq().Find(cell => cell is not LexedCell.Blank);
         if (firstNonBlankOrNull is not Coord firstNonBlank) { return new None(); }
         
-        if (subSheet[firstNonBlank] is not LexedCell.Header header)
+        if (!subSheet[firstNonBlank].IsHeader())
         {
             return StrayCellAtInnerCoord(subSheet, firstNonBlank);
         }
@@ -638,38 +283,149 @@ public static class Logic
 
         var valRange = lower.SliceCols(firstNonBlank.Col..);
 
-        return header.AsOneOf().Match(
-            valCell => valRange.CoordAndCellSeq().Skip(1).Find(cell => cell is not LexedCell.Blank) switch
+        return subSheet[firstNonBlank] switch
+        {
+            LexedCell.JVal jVal => valRange.CoordAndCellSeq().Skip(1).Find(cell => cell is not LexedCell.Blank) switch
             {
                 { } strayCoord => StrayCellAtInnerCoord(valRange, strayCoord),
-                _ => new AstNode.Leaf(valCell.V)
+                _ => new AstNode.Leaf(jVal.V)
             },
-            mtxHeader => ParseMtx(valRange)
-        );
+            LexedCell.MtxHead mtxHead => ParseMtx(valRange),
+            _ => throw new UnreachableException()
+        };
     }
 
     private static IReadOnlyDictionary<string, LexedCell> SimpleLexedCells { get; } = new Dictionary<string, LexedCell>
     {
         {"", new LexedCell.Blank()},
-        {":[", new LexedCell.Header.Mtx(MtxKind.Arr, false)},
-        {":{", new LexedCell.Header.Mtx(MtxKind.Obj, false)},
-        {":^[", new LexedCell.Header.Mtx(MtxKind.Arr, true)},
-        {":^{", new LexedCell.Header.Mtx(MtxKind.Obj, true)},
+        {":[", new LexedCell.MtxHead(MtxKind.Arr, false)},
+        {":{", new LexedCell.MtxHead(MtxKind.Obj, false)},
+        {":^[", new LexedCell.MtxHead(MtxKind.Arr, true)},
+        {":^{", new LexedCell.MtxHead(MtxKind.Obj, true)},
     };
 
-    public static OneOf<LexedCell, LexError> Lex(string cellText, Coord cellCoord)
+    // TODO no need to return string here (I think)
+    public static OneOf<JsonVal.Any, string, None> TryParseJsonExpr(string text)
+    {
+        if (Regex.IsMatch("::.", text))
+        {
+            var jsonText = text[2..];
+            JsonSerializerOptions jsonOpts = new JsonSerializerOptions(); // TODO
+            if (JsonSerializer.Deserialize<JsonVal.Any>(jsonText, jsonOpts) is { } jsonVal) { return jsonVal; }
+        }
+        else if (Regex.IsMatch(":.", text))
+        {
+            // TODO
+        }
+
+        return new None(); // ???
+    }
+
+    public enum PathSegmentType
+    {
+        Unquoted,
+        SingleQuoted,
+        DoubleQuoted
+    };
+
+    public static LexedCell Lex(string cellText, Coord cellCoord)
     {
         var trimmedText = cellText.Trim();
         
         if (SimpleLexedCells.TryGetValue(trimmedText, out var cell)) { return cell; }
         
         if (trimmedText.StartsWith("//")) { return new LexedCell.Blank(); }
-        
-        if (trimmedText.StartsWith("."))
+
+        // TODO make it so starting with colon but NOT having JSON literal is an error
+        if (trimmedText.StartsWith(':'))
         {
-            // parse as if it is CSV
-            // then re-quote strings and parse as JSON
-            throw new NotImplementedException();
+            var jsonLitParse = TryParseJsonExpr(trimmedText[1..]);
+            if (jsonLitParse.TryPickT0(out JsonVal.Any jsonVal, out _)) { return new LexedCell.JVal(jsonVal); }
+            if (jsonLitParse.TryPickT1(out string errMsg, out _)) { return new LexedCell.Error(errMsg); } // TODO
+        }
+        
+        if (trimmedText.StartsWith('.'))
+        {
+            var textAfterDot = trimmedText[1..];
+
+            var pathAsJsonParse = TryParseJsonExpr(textAfterDot);
+            if (pathAsJsonParse.TryPickT0(out JsonVal.Any pathAsJson, out _))
+            {
+                JsonSerializerOptions jsonOpts = new JsonSerializerOptions(); // TODO
+                try { return new LexedCell.Path(pathAsJson.V.Deserialize<LexedPath>()); }
+                catch (JsonException e) { return new LexedCell.Error(e.Message); } // TODO
+            }
+            if (pathAsJsonParse.TryPickT1(out string errMsg, out _)) { return new LexedCell.Error(errMsg); }  // TODO
+
+            var segments = textAfterDot.Split('.');
+            var pathElmts = new InputPathElmt[segments.Length];
+
+            foreach (var (segment, idx) in segments.Select((s, i) => (s, i)))
+            {
+                switch (segment)
+                {
+                    case "+":
+                        pathElmts[idx] = new InputPathElmt.ArrElmt(ArrElmtKind.Plus);
+                        continue;
+                    case "^":
+                        pathElmts[idx] = new InputPathElmt.ArrElmt(ArrElmtKind.Stop);
+                        continue;
+                }
+
+                if (Regex.IsMatch(segment, @"^\w+$"))
+                {
+                    var segmentUtf8 = Encoding.UTF8.GetBytes(segment).ToImmutableArray();
+                    pathElmts[idx] = new InputPathElmt.Key(segmentUtf8);
+                    continue;
+                }
+                
+                InputPathElmt.ArrElmt? arrElmtOrNull = segment switch
+                {
+                    "+" => new InputPathElmt.ArrElmt(ArrElmtKind.Plus),
+                    "^" => new InputPathElmt.ArrElmt(ArrElmtKind.Stop),
+                    _ => null
+                };
+
+                return new LexedCell.Error("asdf"); // TODO
+            }
+            
+            // TODO later: Allow quoted/json path segments to be used together with unquoted ones.
+            if (textAfterDot.StartsWith(':'))
+            {
+                
+            }
+            
+            // Scratch this. Instead permit \w's between dots OR .::<sq json array or string> OR .::<dq json arr/str>
+            
+            if (trimmedText.EndsWith('.')) { throw new Exception(); } // TODO
+            
+            // TODO RESUME HERE!!!!!!
+            const string subEscapedQuote = "\uE000";
+            var trimmedTextWithEscapedQuotes = trimmedText.Replace("\\\"", subEscapedQuote);
+            
+            List<char> trimmedTextWithEscapedQuotesAndQuotedDots = new List<char>();
+
+            bool isInQuote = false;
+            for (int i = 0; i < trimmedText.Length; i++)
+            {
+                if (trimmedTextWithEscapedQuotes[i] == '.')
+                {
+                    if (trimmedTextWithEscapedQuotes[i+1] == '\"')
+                    {
+                        
+                    }
+                }
+            }
+
+            foreach (var VARIABLE in COLLECTION)
+            {
+                
+            }
+            
+            
+            const string subQuotedDot = "\U000F000D";
+
+            var subStrings = 
         }
 
         if (trimmedText.StartsWith(":"))
@@ -697,10 +453,10 @@ public static class Logic
             throw; // TODO
         }
 
-        return new LexedCell.Header.Val(jsonValue);
+        return new LexedCell.JVal(jsonValue);
     }
 
-    public static OneOf<LexedSubSheet, LexError> LexSheet(string[,] sheet)
+    public static OneOf<SubSheet<LexedCell>, LexError> LexSheet(string[,] sheet)
     {
         var lexedCells = new LexedCell[sheet.GetLength(0), sheet.GetLength(1)];
         var rect = new Rect((0, 0), (sheet.GetLength(0), sheet.GetLength(1)));
@@ -712,11 +468,11 @@ public static class Logic
             else { return lexResult.AsT1; }
         }
         
-        return new LexedSubSheet(lexedCells, (0,0), false);
+        return new SubSheet<LexedCell>(lexedCells, (0,0), false);
     }
 }
 
-public sealed record class LexError(Coord Coord);
+public sealed record LexError(Coord Coord);
 
 public static class ApiV0
 {
@@ -748,7 +504,7 @@ public static class TEMP
     //    var rowPathsWithIdxs = Enumerable.Range(0, simpleMatrix.GetLength(1)).Skip(1)
     //        .Select(colIdx => (colIdx, inputPath: LexInputPath(simpleMatrix[0, colIdx])))
     //        .ToList();
-//
+    //
     //    foreach (var (rowIdx, pathFromCol) in colPathsWithIdxs)
     //    {
     //        MtxNode.Branch MakeBranch((int colIdx, LexedPath inputPath) t) =>
@@ -771,96 +527,26 @@ public static class TEMP
     }
 }
 
-// TODO remove
-public static class Ext
+public static class CsvUtil
 {
-    public static TOut CastToBase<TIn, TOut>(this OneOf<TIn> oneOf, Func<object, TOut> exemplar)
-        where TIn : TOut =>
-            oneOf.Match(v => v);
-    public static TOut CastToBase<TIn1, TIn2, TOut>(this OneOf<TIn1, TIn2> oneOf, Func<object, TOut> exemplar)
-        where TIn1 : TOut where TIn2 : TOut =>
-            oneOf.Match(v => (TOut)v, v => v);
-    public static TOut CastToBase<TIn1, TIn2, TIn3, TOut>(this OneOf<TIn1, TIn2, TIn3> oneOf, Func<object, TOut> exemplar)
-        where TIn1 : TOut where TIn2 : TOut where TIn3 : TOut =>
-            oneOf.Match(v => (TOut)v, v => v, v => v);
-}
-
-/*
- * Adapted from:
- *     MoreLINQ - Extensions to LINQ to Objects
- *     Copyright (c) 2010 Leopold Bushkin. All rights reserved.
- *     
- *     Licensed under the Apache License, Version 2.0 (the "License");
- *     you may not use this file except in compliance with the License.
- *     You may obtain a copy of the License at
- *     
- *         http://www.apache.org/licenses/LICENSE-2.0
- *     
- *     Unless required by applicable law or agreed to in writing, software
- *     distributed under the License is distributed on an "AS IS" BASIS,
- *     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *     See the License for the specific language governing permissions and
- *     limitations under the License.
- * 
- * With the following changes:
- *   - Edited for terseness
- *   - Changed return type to IEnumerable<IReadonlyList<T>>
- *   - Moved to namespace JmonLib.Impl
- */
-public static class MoreLinq
-{
-    /// <summary>
-    /// Divides a sequence into multiple sequences by using a segment detector based on the original sequence
-    /// </summary>
-    /// <param name="predicate">
-    /// A function, which returns <c>true</c> if the given element
-    /// begins a new segment, and <c>false</c> otherwise
-    /// </param>
-    public static IEnumerable<IReadOnlyList<T>> Segment<T>(this IEnumerable<T> source, Func<T, bool> predicate) =>
-        Segment(source, (curr, _) => predicate(curr));
-
-    /// <summary>
-    /// Divides a sequence into multiple sequences by using a segment detector based on the original sequence
-    /// </summary>
-    /// <param name="predicate">
-    /// A function, which returns <c>true</c> if the given element or
-    /// index indicate a new segment, and <c>false</c> otherwise
-    /// </param>
-    public static IEnumerable<IReadOnlyList<T>> Segment<T>(this IEnumerable<T> source, Func<T, int, bool> predicate) =>
-        Segment(source, (curr, _, index) => predicate(curr, index));
-
-    /// <summary>
-    /// Divides a sequence into multiple sequences by using a segment detector based on the original sequence
-    /// </summary>
-    /// <param name="predicate">
-    /// A function, which returns <c>true</c> if the given current element,
-    /// previous element or index indicate a new segment, and <c>false</c> otherwise
-    /// </param>
-    public static IEnumerable<IReadOnlyList<T>> Segment<T>(this IEnumerable<T> source, Func<T, T, int, bool> predicate)
+    public static IReadOnlyList<IReadOnlyList<string>> SplitDelimitedText(Stream stream, char delimiter)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(predicate);
-
-        return _(); IEnumerable<IReadOnlyList<T>> _()
+        IEnumerable<IReadOnlyList<string>> Inner()
         {
-            using var e = source.GetEnumerator();
-            if (!e.MoveNext())
-                yield break;
-            
-            var previous = e.Current;
-            var segment = new List<T> { previous };
-
-            for (var index = 1; e.MoveNext(); index++)
+            using var csvReader = new TextFieldParser(stream)
             {
-                if (predicate(e.Current, previous, index))
-                {
-                    yield return segment;
-                    segment = new List<T> { e.Current };
-                }
-                else { segment.Add(e.Current); }
-                previous = e.Current;
+                Delimiters = new[] { "," },
+                HasFieldsEnclosedInQuotes = true
+            };
+
+            while (!csvReader.EndOfData)
+            {
+                var row = csvReader.ReadFields();
+                if (row is null) { throw new Exception("null row"); }
+                yield return row;
             }
-            yield return segment;
         }
+
+        return Inner().ToList();
     }
 }
