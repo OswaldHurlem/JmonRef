@@ -4,8 +4,8 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using LibJmon.Impl;
 using System.Collections.Immutable;
-
-// TODO consider revising serialization for unions-of-unions like AstResult
+using LibJmon.SuperTypes;
+using LibJmon.Types;
 
 namespace LibJmon;
 
@@ -210,47 +210,6 @@ public abstract class UnionConverter<TBase, TDer0, TDer1, TDer2, TDer3, TDer4> :
         JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull!), options);
     }
 }
-
-/*public sealed class LexedCellConverter : JsonConverter<LexedCell>
-{
-    const string nameBlank = $"{nameof(LexedCell.Blank)}";
-    const string namePath = $"{nameof(LexedCell.Path)}";
-    const string nameHeaderVal = $"{nameof(LexedCell.Header)}.{nameof(LexedCell.Header.Val)}";
-    const string nameHeaderMtx = $"{nameof(LexedCell.Header)}.{nameof(LexedCell.Header.Mtx)}";
-    
-    public override LexedCell? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-    {
-        if (JsonSerializer.Deserialize<NameAndNode>(ref reader, options) is (string name, JsonNode node))
-        {
-            return name switch
-            {
-                nameBlank       => node.Deserialize<LexedCell.Blank>(options),
-                namePath        => node.Deserialize<LexedCell.Path>(options),
-                nameHeaderVal   => node.Deserialize<LexedCell.Header.Val>(options),
-                nameHeaderMtx   => node.Deserialize<LexedCell.Header.Mtx>(options),
-                _ => throw new Exception(), // TODO
-            };
-        }
-        
-        throw new Exception(); // TODO
-    }
-    
-    public override void Write(Utf8JsonWriter writer, LexedCell value, JsonSerializerOptions options)
-    {
-        var (name, nodeOrNull) = value.AsOneOf().Match(
-            blank => (nameBlank, JsonSerializer.SerializeToNode(blank, options)),
-            path => (namePath, JsonSerializer.SerializeToNode(path, options)),
-            header => header.AsOneOf().Match(
-                val => (nameHeaderVal, JsonSerializer.SerializeToNode(val, options)),
-                mtx => (nameHeaderMtx, JsonSerializer.SerializeToNode(mtx, options))
-            )
-        );
-        
-        if (nodeOrNull is null) { throw new Exception(); } // TODO
-        
-        JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull!), options);
-    }
-}*/
 
 public sealed class LexedCellConverter
     : UnionConverter<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead, LexedCell.Error> { }
