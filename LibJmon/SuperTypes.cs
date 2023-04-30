@@ -1,4 +1,5 @@
 ﻿using OneOf;
+using OneOf.Types;
 
 namespace LibJmon.SuperTypes;
 
@@ -72,4 +73,14 @@ public static class UnionUtil
             TDer4 t4 => t4,
             _ => throw new Exception(),
         };
+}
+
+// TODO replace some nulls w/ OneOf<T,None>
+public static class NullableExt
+{
+    public static OneOf<T, None> ToOneOf<T>(this T? v)
+    {
+        if (v is {} notNull) { return notNull; }
+        return new None();
+    }
 }

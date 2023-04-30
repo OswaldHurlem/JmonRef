@@ -1,8 +1,18 @@
-﻿namespace LibJmon;
+﻿using LibJmon.Types;
+
+namespace LibJmon;
+
+public static class TestingApi
+{
+    public static LexedCell[,] LexCells(ReadOnlyMemory<byte>[,] cells) =>
+        Impl.TestingApi.LexCells(cells);
+    
+    public static AstNode ParseLexedCells(LexedCell[,] lexedCells) =>
+        Impl.TestingApi.ParseLexedCells(lexedCells);
+}
 
 /*public static class ApiV0
 {
-  
     public static Values.JsonVal JsonFromJmon(Values.JmonSheet jmonSheet) => //Impl.ApiV0.JsonFromJmon(jmonSheet);
         throw new NotImplementedException();
 }*/

@@ -116,6 +116,8 @@ public readonly record struct SubSheet<T>(ReadOnlyMemory2D<T> NonTposedMem, Coor
         );
         return true;
     }
+    
+    public static SubSheet<T> Create(ReadOnlyMemory2D<T> mem) => new(mem, Coord.Of00, false);
 }
 
 public static class SubSheetExt

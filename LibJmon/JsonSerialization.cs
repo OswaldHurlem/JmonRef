@@ -4,10 +4,43 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using LibJmon.Impl;
 using System.Collections.Immutable;
+using System.Text.Encodings.Web;
 using LibJmon.SuperTypes;
 using LibJmon.Types;
 
-namespace LibJmon;
+namespace LibJmon.JsonSerialization;
+
+public static class Resources
+{
+    private static Lazy<JsonSerializerOptions> _options = new Lazy<JsonSerializerOptions>(
+        () => {
+            var o = new JsonSerializerOptions
+            {
+                // WriteIndented = true,
+                Encoder = JavaScriptEncoder.Default,
+                IncludeFields = true,
+            };
+            
+            o.Converters.Add(new JsonAny_Converter());
+            o.Converters.Add(new LexedPath_Converter());
+            o.Converters.Add(new LexedCell_Path_Converter());
+            o.Converters.Add(new LexedCell_JVal_Converter());
+            o.Converters.Add(new LexedCell_Error_Converter());
+            o.Converters.Add(new ConvertedPath_Converter());
+            o.Converters.Add(new AstNode_Leaf_Converter());
+            o.Converters.Add(new AstNode_Branch_Converter());
+            o.Converters.Add(new AstNode_Error_Converter());
+            o.Converters.Add(new JsonStrConverter());
+            o.Converters.Add(new PathBaseItemConverter());
+            o.Converters.Add(new LexedCellConverter());
+            o.Converters.Add(new JsonValConverter());
+            o.Converters.Add(new AstNodeConverter());
+
+            return o;
+        });
+
+    public static JsonSerializerOptions JsonSerializerOptions => _options.Value;
+}
 
 public abstract class ImplicitConverter<TObj, TConverted> : JsonConverter<TObj>
     where TObj : IImplicitConversion<TObj, TConverted>
@@ -19,14 +52,24 @@ public abstract class ImplicitConverter<TObj, TConverted> : JsonConverter<TObj>
         JsonSerializer.Serialize(writer, (TConverted)value, options);
 }
 
-public sealed class JsonAny_Converter : ImplicitConverter<JsonVal.Any, JsonNode?> { }
-public sealed class LexedPath_Converter : ImplicitConverter<LexedPath, ImmutableArray<InputPathElmt>> { }
+public sealed class JsonAny_Converter : JsonConverter<JsonVal.Any>
+{
+    public override JsonVal.Any Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        JsonSerializer.Deserialize<JsonNode>(ref reader, options) ?? null;
+
+    public override void Write(Utf8JsonWriter writer, JsonVal.Any value, JsonSerializerOptions options) =>
+        JsonSerializer.Serialize(writer, value.V, options);
+
+    public override bool HandleNull => true;
+}
+
+public sealed class LexedPath_Converter : ImplicitConverter<LexedPath, ImmutableArray<PathItem>> { }
 
 public sealed class LexedCell_Path_Converter : ImplicitConverter<LexedCell.Path, LexedPath> { }
 public sealed class LexedCell_JVal_Converter : ImplicitConverter<LexedCell.JVal, JsonVal.Any> { }
 public sealed class LexedCell_Error_Converter : ImplicitConverter<LexedCell.Error, string> { }
 
-public sealed class ConvertedPath_Converter : ImplicitConverter<ConvertedPath, ImmutableArray<ConvertedPathElmt>> { }
+public sealed class ConvertedPath_Converter : ImplicitConverter<ConvertedPath, ImmutableArray<PathItem>> { }
 
 public sealed class AstNode_Leaf_Converter : ImplicitConverter<AstNode.Leaf, JsonVal.Any> { }
 public sealed class AstNode_Branch_Converter
@@ -46,28 +89,26 @@ public sealed class JsonStrConverter : JsonConverter<JsonVal.Str>
         writer.WriteStringValue(value.V.AsSpan());
 }
 
-public abstract class PathElmtConverter<TPathElmt> : JsonConverter<TPathElmt> where TPathElmt : IPathElmt<TPathElmt>
+public class PathBaseItemConverter : JsonConverter<PathItem>
 {
-    public override TPathElmt? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+    public override PathItem? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
         reader.TokenType switch
         {
-            JsonTokenType.String => TPathElmt.FromStr(JsonSerializer.Deserialize<JsonVal.Str>(ref reader, options)!),
-            JsonTokenType.Number => TPathElmt.FromInt(reader.GetInt32()),
+            JsonTokenType.String => new PathItem.Key(
+                JsonSerializer.Deserialize<JsonVal.Str>(ref reader, options)!
+            ),
+            JsonTokenType.Number => new PathItem.Idx(reader.GetInt32()),
             _ => throw new Exception()
         };
 
-    public override void Write(Utf8JsonWriter writer, TPathElmt value, JsonSerializerOptions options) =>
-        value.ToStrOrInt().Switch(
-            s => JsonSerializer.Serialize(writer, s, options),
-            writer.WriteNumberValue
+    public override void Write(Utf8JsonWriter writer, PathItem value, JsonSerializerOptions options) =>
+        value.AsOneOf().Switch(
+            key => JsonSerializer.Serialize(writer, key.V, options),
+            idx => writer.WriteNumberValue(idx.V)
         );
 }
 
-public sealed class InputPathElmtConverter : PathElmtConverter<InputPathElmt> { }
-
-public sealed class ConvertedPathElmtConverter : PathElmtConverter<ConvertedPathElmt> { }
-
-internal sealed record NameAndNode(string Type, JsonNode Val);
+internal sealed record NameAndNode(string Type, JsonNode? Val);
 
 public class UnionConverter<TBase, TDerived0, TDerived1> : JsonConverter<TBase>
     where TBase : IUnion<TBase, TDerived0, TDerived1>
@@ -105,9 +146,7 @@ public class UnionConverter<TBase, TDerived0, TDerived1> : JsonConverter<TBase>
             td1 => (NameFromIdx[1], JsonSerializer.SerializeToNode(td1, options))
         );
 
-        if (nodeOrNull is null) { throw new Exception(); } // TODO
-        
-        JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull!), options);
+        JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull), options);
     }
 }
 
@@ -151,9 +190,7 @@ public abstract class UnionConverter<TBase, TDerived0, TDerived1, TDerived2> : J
             td2 => (NameFromIdx[2], JsonSerializer.SerializeToNode(td2, options))
         );
 
-        if (nodeOrNull is null) { throw new Exception(); } // TODO
-        
-        JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull!), options);
+        JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull), options);
     }
 }
 
@@ -205,9 +242,7 @@ public abstract class UnionConverter<TBase, TDer0, TDer1, TDer2, TDer3, TDer4> :
             td4 => (NameFromIdx[4], JsonSerializer.SerializeToNode(td4, options))
         );
 
-        if (nodeOrNull is null) { throw new Exception(); } // TODO
-        
-        JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull!), options);
+        JsonSerializer.Serialize(writer, new NameAndNode(name, nodeOrNull), options);
     }
 }
 

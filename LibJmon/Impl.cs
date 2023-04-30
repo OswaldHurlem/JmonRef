@@ -17,112 +17,42 @@ using OneOf.Types;
 
 namespace LibJmon.Impl;
 
-using ArrIdx = Int32;
-
-public abstract record LexedCell
-    : IUnion<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead, LexedCell.Error>
-{
-    public sealed record Blank : LexedCell { }
-
-    public sealed record Path(LexedPath V) : LexedCell, IImplicitConversion<Path, LexedPath>
-    {
-        public static implicit operator LexedPath(Path p) => p.V;
-        public static implicit operator Path(LexedPath p) => new(p);
-    }
-
-    public sealed record JVal(JsonVal.Any V) : LexedCell, IImplicitConversion<JVal, JsonVal.Any>
-    {
-        public static implicit operator JsonVal.Any(JVal v) => v.V;
-        public static implicit operator JVal(JsonVal.Any v) => new(v);
-    }
-
-    public sealed record MtxHead(MtxKind Kind, bool IsTp) : LexedCell;
-
-    public sealed record Error(string V) : LexedCell, IImplicitConversion<Error, string>
-    {
-        public static implicit operator string(Error e) => e.V;
-        public static implicit operator Error(string e) => new(e);
-    }
-
-    public bool IsHeader() => this switch
-    {
-        MtxHead or JVal => true,
-        _ => false
-    };
-}
-
-public abstract record AstNode : IUnion<AstNode, AstNode.Leaf, AstNode.Branch, AstNode.Error>
-{
-    public sealed record Leaf(JsonVal.Any V) : AstNode, IImplicitConversion<Leaf, JsonVal.Any>
-    {
-        public static implicit operator Leaf(JsonVal.Any v) => new(v);
-        public static implicit operator JsonVal.Any(Leaf l) => l.V;
-    }
-
-    public sealed record Branch(ImmutableArray<Branch.Item> V)
-        : AstNode, IImplicitConversion<Branch, ImmutableArray<Branch.Item>>
-    {
-        public readonly record struct Item(LexedPath Path, AstNode Result);
-        
-        public static Branch Empty => new(ImmutableArray<Item>.Empty);
-        public static implicit operator ImmutableArray<Item>(Branch from) => from.V;
-
-        public static implicit operator Branch(ImmutableArray<Item> to) => new(to);
-        
-        private IStructuralEquatable AsStructEq => V;
-        public bool Equals(Branch? other) => StructuralComparisons.StructuralEqualityComparer.Equals(V, other?.V);
-        public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
-    }
-
-    public sealed record Error(string V) : AstNode, IImplicitConversion<Error, string>
-    {
-        public static implicit operator Error(string v) => new(v);
-        public static implicit operator string(Error e) => e.V;
-    }
-}
-
 // internal readonly record struct Assignment(ConvertedPath Path, JsonVal Value);
 
 // internal readonly record struct LexedValSeq(IReadOnlyList<OneOf<JsonVal, None>> Vals);
-
-public sealed class ConvertedPathComparer : IEqualityComparer<ConvertedPath>
-{
-    public bool Equals(ConvertedPath pA, ConvertedPath pB) => pA.V.SequenceEqual(pB.V);
-    public int GetHashCode(ConvertedPath p) => p.V.Aggregate(0, HashCode.Combine);
-}
 
 public static class Logic
 {
     readonly record struct ConvertPathsState(IDictionary<ConvertedPath, int> IdxForPartialPath)
     {
-        public static ConvertPathsState Initial => new(new Dictionary<ConvertedPath, int>(new ConvertedPathComparer()));
+        public static ConvertPathsState Initial => new(new Dictionary<ConvertedPath, int>());
     }
 
     private static ConvertedPath ConvertPath(ConvertedPath prefixPath, LexedPath lexedPath, ConvertPathsState state)
     {
         var cvtPathElmts = prefixPath.V.ToList();
 
-        ConvertedPathElmt ConvertProtoIdxElmt(InputPathElmt.ArrElmt arrElmt)
+        PathItem ConvertProtoIdxElmt(PathItem.Idx arrElmt)
         {
             var partialPath = new ConvertedPath(cvtPathElmts.ToImmutableArray());
             if (!state.IdxForPartialPath.TryGetValue(partialPath, out var idx)) { idx = -1; }
-            idx += arrElmt.V == ArrElmtKind.Plus ? 1 : 0;
+            idx += arrElmt.V;
             state.IdxForPartialPath[partialPath] = idx;
-            return new ConvertedPathElmt.Idx(idx);
+            return new PathItem.Idx(idx);
         }
 
-        var pathSegments = lexedPath.V.Segment(elmt => elmt is InputPathElmt.ArrElmt);
+        var pathSegments = lexedPath.V.Segment(elmt => elmt is PathItem.Idx);
         
-        foreach (IReadOnlyList<InputPathElmt> pathSegment in pathSegments)
+        foreach (IReadOnlyList<PathItem> pathSegment in pathSegments)
         {
             var elmt0 = pathSegment[0].AsOneOf().Match(
-                keyElmt => new ConvertedPathElmt.Key(keyElmt.V),
+                keyElmt => new PathItem.Key(keyElmt),
                 ConvertProtoIdxElmt
             );
             
             var otherElmts = pathSegment.Skip(1)
-                .Cast<InputPathElmt.Key>()
-                .Select(elmt => new ConvertedPathElmt.Key(elmt.V));
+                .Cast<PathItem.Key>()
+                .Select(elmt => new PathItem.Key(elmt));
             cvtPathElmts.Add(elmt0);
             cvtPathElmts.AddRange(otherElmts);
         }
@@ -150,12 +80,12 @@ public static class Logic
     {
         var seq = cellSeq
             .Select((cell, idx) => (path: (cell as LexedCell.Path)?.V, idx))
-            .Where(t => t.path.HasValue)
+            .Where(t => t.path is not null)
             .ToList();
         
         var endsSeq = seq.Select(t => t.idx).Skip(1).Concat(new[] { cellSeq.Count });
         
-        return seq.Zip(endsSeq, (t, end) => (t.path!.Value, t.idx, end));
+        return seq.Zip(endsSeq, (t, end) => (t.path!, t.idx, end));
     }
 
     // TODO return BadPathElmt
@@ -304,21 +234,31 @@ public static class Logic
         {":^{", new LexedCell.MtxHead(MtxKind.Obj, true)},
     };
 
+    public static string ConvertSqToDq(string sqStr) =>
+        sqStr.Replace("\"", "\\\"")
+            .Replace("\\'", "\uE0E1").Replace('\'', '\uE001')
+            .Replace('\uE001', '\"').Replace('\uE0E1', '\'');
+
     // TODO no need to return string here (I think)
     public static OneOf<JsonVal.Any, string, None> TryParseJsonExpr(string text)
     {
-        if (Regex.IsMatch("::.", text))
+        const string kNotJson = "";
+        bool isDq = text.StartsWith("::") && (2 < text.Length);
+        bool isSq = !isDq && text.StartsWith(':') && (1 < text.Length);
+        
+        string jsonCode = isDq
+            ? text[2..]
+            : (isSq ? ConvertSqToDq(text[1..]) : kNotJson);
+        
+        if (jsonCode == kNotJson) { return new None(); }
+        
+        var jsonOpts = JsonSerialization.Resources.JsonSerializerOptions;
+        try
         {
-            var jsonText = text[2..];
-            JsonSerializerOptions jsonOpts = new JsonSerializerOptions(); // TODO
-            if (JsonSerializer.Deserialize<JsonVal.Any>(jsonText, jsonOpts) is { } jsonVal) { return jsonVal; }
+            if (JsonSerializer.Deserialize<JsonVal.Any>(jsonCode, jsonOpts) is { } jsonVal) { return jsonVal; }
+            throw new UnreachableException();
         }
-        else if (Regex.IsMatch(":.", text))
-        {
-            // TODO
-        }
-
-        return new None(); // ???
+        catch (JsonException e) { return e.Message; }
     }
 
     public enum PathSegmentType
@@ -328,151 +268,77 @@ public static class Logic
         DoubleQuoted
     };
 
-    public static LexedCell Lex(string cellText, Coord cellCoord)
+    public static LexedCell Lex(ReadOnlySpan<byte> cellTextUtf8)
     {
+        var cellText = Encoding.UTF8.GetString(cellTextUtf8);
+        var jsonOpts = JsonSerialization.Resources.JsonSerializerOptions;
+        
         var trimmedText = cellText.Trim();
         
         if (SimpleLexedCells.TryGetValue(trimmedText, out var cell)) { return cell; }
         
         if (trimmedText.StartsWith("//")) { return new LexedCell.Blank(); }
 
-        // TODO make it so starting with colon but NOT having JSON literal is an error
         if (trimmedText.StartsWith(':'))
         {
             var jsonLitParse = TryParseJsonExpr(trimmedText[1..]);
             if (jsonLitParse.TryPickT0(out JsonVal.Any jsonVal, out _)) { return new LexedCell.JVal(jsonVal); }
-            if (jsonLitParse.TryPickT1(out string errMsg, out _)) { return new LexedCell.Error(errMsg); } // TODO
+            if (jsonLitParse.TryPickT1(out string errMsg, out _))
+            {
+                return new LexedCell.Error($"Error when parsing JSON Literal: {errMsg}");
+            }
+
+            return new LexedCell.Error("Cell starts with ':' but is not a Header.");
         }
         
         if (trimmedText.StartsWith('.'))
         {
             var textAfterDot = trimmedText[1..];
-
+            if (textAfterDot == "") { return new LexedCell.Path(LexedPath.Empty); }
             var pathAsJsonParse = TryParseJsonExpr(textAfterDot);
+
             if (pathAsJsonParse.TryPickT0(out JsonVal.Any pathAsJson, out _))
             {
-                JsonSerializerOptions jsonOpts = new JsonSerializerOptions(); // TODO
-                try { return new LexedCell.Path(pathAsJson.V.Deserialize<LexedPath>()); }
-                catch (JsonException e) { return new LexedCell.Error(e.Message); } // TODO
+                return pathAsJson.TryDeserialize<LexedPath>()
+                    .MapT1(_ => pathAsJson.TryDeserialize<PathItem>().MapT0(LexedPath.WithOneItem))
+                    .Match<OneOf<LexedPath, None>>(p => p, pathOrNone => pathOrNone)
+                    .MapT0<LexedCell.Path>(p => p)
+                    .MapT1(_ => new LexedCell.Error("JSON expression is not a LexedPath or PathItem"))
+                    .Match<LexedCell>(p => p, err => err);
             }
             if (pathAsJsonParse.TryPickT1(out string errMsg, out _)) { return new LexedCell.Error(errMsg); }  // TODO
 
             var segments = textAfterDot.Split('.');
-            var pathElmts = new InputPathElmt[segments.Length];
+            var pathElmts = new PathItem[segments.Length];
 
             foreach (var (segment, idx) in segments.Select((s, i) => (s, i)))
             {
                 switch (segment)
                 {
                     case "+":
-                        pathElmts[idx] = new InputPathElmt.ArrElmt(ArrElmtKind.Plus);
+                        pathElmts[idx] = new PathItem.Idx(1);
                         continue;
                     case "^":
-                        pathElmts[idx] = new InputPathElmt.ArrElmt(ArrElmtKind.Stop);
+                        pathElmts[idx] = new PathItem.Idx(0);
+                        continue;
+                    default:
+                        if (!Regex.IsMatch(segment, @"^\w+$"))
+                        {
+                            return new LexedCell.Error(@"Path elements must match regex ^\w+$");
+                        }
+                        var segmentUtf8 = Encoding.UTF8.GetBytes(segment).ToImmutableArray();
+                        pathElmts[idx] = new PathItem.Key(segmentUtf8);
                         continue;
                 }
-
-                if (Regex.IsMatch(segment, @"^\w+$"))
-                {
-                    var segmentUtf8 = Encoding.UTF8.GetBytes(segment).ToImmutableArray();
-                    pathElmts[idx] = new InputPathElmt.Key(segmentUtf8);
-                    continue;
-                }
-                
-                InputPathElmt.ArrElmt? arrElmtOrNull = segment switch
-                {
-                    "+" => new InputPathElmt.ArrElmt(ArrElmtKind.Plus),
-                    "^" => new InputPathElmt.ArrElmt(ArrElmtKind.Stop),
-                    _ => null
-                };
-
-                return new LexedCell.Error("asdf"); // TODO
-            }
-            
-            // TODO later: Allow quoted/json path segments to be used together with unquoted ones.
-            if (textAfterDot.StartsWith(':'))
-            {
-                
-            }
-            
-            // Scratch this. Instead permit \w's between dots OR .::<sq json array or string> OR .::<dq json arr/str>
-            
-            if (trimmedText.EndsWith('.')) { throw new Exception(); } // TODO
-            
-            // TODO RESUME HERE!!!!!!
-            const string subEscapedQuote = "\uE000";
-            var trimmedTextWithEscapedQuotes = trimmedText.Replace("\\\"", subEscapedQuote);
-            
-            List<char> trimmedTextWithEscapedQuotesAndQuotedDots = new List<char>();
-
-            bool isInQuote = false;
-            for (int i = 0; i < trimmedText.Length; i++)
-            {
-                if (trimmedTextWithEscapedQuotes[i] == '.')
-                {
-                    if (trimmedTextWithEscapedQuotes[i+1] == '\"')
-                    {
-                        
-                    }
-                }
             }
 
-            foreach (var VARIABLE in COLLECTION)
-            {
-                
-            }
-            
-            
-            const string subQuotedDot = "\U000F000D";
-
-            var subStrings = 
+            return new LexedCell.Path(pathElmts.ToImmutableArray());
         }
 
-        if (trimmedText.StartsWith(":"))
-        {
-            if (trimmedText.StartsWith(":::"))
-            {
-                
-            }
-
-            if (trimmedText.StartsWith("::"))
-            {
-                throw new NotImplementedException();
-            }
-
-            return new LexError(cellCoord);
-        }
-
-        JsonValue? jsonValue = null;
-        try
-        {
-            jsonValue = JsonNode.Parse(trimmedText)?.AsValue();
-        }
-        catch (Exception)
-        {
-            throw; // TODO
-        }
-
+        JsonVal.Any jsonValue = JsonSerializer.SerializeToNode(trimmedText, jsonOpts);
         return new LexedCell.JVal(jsonValue);
     }
-
-    public static OneOf<SubSheet<LexedCell>, LexError> LexSheet(string[,] sheet)
-    {
-        var lexedCells = new LexedCell[sheet.GetLength(0), sheet.GetLength(1)];
-        var rect = new Rect((0, 0), (sheet.GetLength(0), sheet.GetLength(1)));
-        
-        foreach (var (r,c) in rect.CoordSeq())
-        {
-            var lexResult = Lex(sheet[r, c], (r,c));
-            if (lexResult.IsT0) { lexedCells[r, c] = lexResult.AsT0; }
-            else { return lexResult.AsT1; }
-        }
-        
-        return new SubSheet<LexedCell>(lexedCells, (0,0), false);
-    }
 }
-
-public sealed record LexError(Coord Coord);
 
 public static class ApiV0
 {
@@ -549,4 +415,23 @@ public static class CsvUtil
 
         return Inner().ToList();
     }
+}
+
+public static class TestingApi
+{
+    public static LexedCell[,] LexCells(ReadOnlyMemory<byte>[,] cells)
+    {
+        var rect = new Rect((0, 0), (cells.GetLength(0), cells.GetLength(1)));
+        var lexedCells = new LexedCell[rect.Dims().Row, rect.Dims().Col];
+
+        foreach (var c in rect.CoordSeq())
+        {
+            lexedCells[c.Row, c.Col] = Logic.Lex(cells[c.Row, c.Col].Span);
+        }
+        
+        return lexedCells;
+    }
+
+
+    public static AstNode ParseLexedCells(LexedCell[,] lexedCells) => throw new NotImplementedException();
 }
