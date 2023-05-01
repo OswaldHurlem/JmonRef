@@ -88,6 +88,12 @@ public static class RectExt
     public static (Range rows, Range cols) ToRanges(this Rect r) => (r.Beg.Row..r.End.Row, r.Beg.Col..r.End.Col);
 }
 
+public static class SubSheet
+{
+    public static SubSheet<T> Create<T>(ReadOnlyMemory2D<T> mem) => new(mem, Coord.Of00, false);
+    public static SubSheet<T> Create<T>(T[,] array) => new(array, Coord.Of00, false);
+}
+
 public readonly record struct SubSheet<T>(ReadOnlyMemory2D<T> NonTposedMem, Coord OuterBeg, bool IsTposed)
 {
     // TODO move to Ext?
@@ -116,8 +122,6 @@ public readonly record struct SubSheet<T>(ReadOnlyMemory2D<T> NonTposedMem, Coor
         );
         return true;
     }
-    
-    public static SubSheet<T> Create(ReadOnlyMemory2D<T> mem) => new(mem, Coord.Of00, false);
 }
 
 public static class SubSheetExt

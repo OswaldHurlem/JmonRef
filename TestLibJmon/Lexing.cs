@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using System.Text.Json;
+using LibJmon;
 using LibJmon.JsonSerialization;
 using LibJmon.Types;
 
@@ -20,8 +21,8 @@ public static class Lexing
     [InlineData(""" .             """, """ {"Type":"Path","Val":[]}                         """)]
     [InlineData(""" .a            """, """ {"Type":"Path","Val":["a"]}                      """)]
     [InlineData(""" .+            """, """ {"Type":"Path","Val":[1]}                        """)]
-    [InlineData(""" .^            """, """ {"Type":"Path","Val":[0]}                        """)]
-    [InlineData(""" .^.+.a        """, """ {"Type":"Path","Val":[0,1,"a"]}                  """)]
+    [InlineData(""" .$            """, """ {"Type":"Path","Val":[0]}                        """)]
+    [InlineData(""" .$.+.a        """, """ {"Type":"Path","Val":[0,1,"a"]}                  """)]
     [InlineData(""" .:'a'         """, """ {"Type":"Path","Val":["a"]}                      """)]
     [InlineData(""" .::"a"        """, """ {"Type":"Path","Val":["a"]}                      """)]
     [InlineData(""" .:[0,1,'a']   """, """ {"Type":"Path","Val":[0,1,"a"]}                  """)]
@@ -38,7 +39,7 @@ public static class Lexing
     public static void CellLexesTo(string cellText, string expJson)
     {
         ReadOnlyMemory<byte>[,] grid = { { Encoding.UTF8.GetBytes(cellText).AsMemory() } };
-        LexedCell[,] lexedCells = LibJmon.TestingApi.LexCells(grid);
+        LexedCell[,] lexedCells = TestingApi.LexCells(grid);
         var json = JsonSerializer.Serialize(lexedCells[0, 0], Resources.JsonSerializerOptions);
         Assert.Equal(expJson.Trim(), json);
     }
@@ -55,7 +56,7 @@ public static class Lexing
     public static void ErrorWhenLexing(string cellText)
     {
         ReadOnlyMemory<byte>[,] grid = { { Encoding.UTF8.GetBytes(cellText).AsMemory() } };
-        LexedCell[,] lexedCells = LibJmon.TestingApi.LexCells(grid);
+        LexedCell[,] lexedCells = TestingApi.LexCells(grid);
         Assert.IsType<LexedCell.Error>(lexedCells[0,0]);
     }
 }

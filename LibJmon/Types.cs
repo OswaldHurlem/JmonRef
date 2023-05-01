@@ -73,7 +73,7 @@ public sealed record LexedPath(ImmutableArray<PathItem> V) :
 }
 
 public sealed record ConvertedPath(ImmutableArray<PathItem> V)
-    : PathBase<LexedPath>(V), IImplicitConversion<ConvertedPath, ImmutableArray<PathItem>>
+    : PathBase<ConvertedPath>(V), IImplicitConversion<ConvertedPath, ImmutableArray<PathItem>>
 {
     public static implicit operator ImmutableArray<PathItem>(ConvertedPath from) => from.V;
     public static implicit operator ConvertedPath(ImmutableArray<PathItem> to) => new(to);
@@ -135,7 +135,7 @@ public abstract record AstNode : IUnion<AstNode, AstNode.Leaf, AstNode.Branch, A
     public sealed record Branch(ImmutableArray<Branch.Item> V)
         : AstNode, IImplicitConversion<Branch, ImmutableArray<Branch.Item>>
     {
-        public readonly record struct Item(LexedPath Path, AstNode Result);
+        public readonly record struct Item(LexedPath Path, AstNode Node);
         
         public static Branch Empty => new(ImmutableArray<Item>.Empty);
         public static implicit operator ImmutableArray<Item>(Branch from) => from.V;
