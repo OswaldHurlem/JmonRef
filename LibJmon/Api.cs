@@ -1,4 +1,6 @@
-﻿using LibJmon.Types;
+﻿using System.Text.Json.Nodes;
+using LibJmon.Impl;
+using LibJmon.Types;
 
 namespace LibJmon;
 
@@ -9,6 +11,9 @@ public static class TestingApi
     
     public static AstNode ParseLexedCells(LexedCell[,] lexedCells) =>
         Impl.TestingApi.ParseLexedCells(lexedCells);
+    
+    public static JsonNode MakeJsonFromAssignments(IReadOnlyList<Assignment> assignments) =>
+        Impl.TestingApi.MakeJsonFromAssignments(assignments);
 }
 
 /*public static class ApiV0

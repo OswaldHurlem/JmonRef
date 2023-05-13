@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.Collections.Immutable;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using LibJmon.SuperTypes;
@@ -28,6 +29,8 @@ public abstract record JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str> // IT
 
         public bool Equals(Str? other) => (other?.V)?.SequenceEqual(V) ?? false;
         public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
+
+        public string ToUtf16String() => Encoding.UTF8.GetString(V.AsSpan());
     }
 }
 

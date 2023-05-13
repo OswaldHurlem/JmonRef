@@ -4,7 +4,7 @@ using LibJmon.Types;
 
 namespace TestLibJmon;
 
-public static class TestRsrc
+public static partial class TestRsrc
 {
     public const string JmonSampleNoAppend = """
         :{         |.                |                  |                |                   
