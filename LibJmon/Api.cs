@@ -12,8 +12,8 @@ public static class TestingApi
     public static AstNode ParseLexedCells(LexedCell[,] lexedCells) =>
         Impl.TestingApi.ParseLexedCells(lexedCells);
     
-    public static JsonNode MakeJsonFromAssignments(IReadOnlyList<Assignment> assignments) =>
-        Impl.TestingApi.MakeJsonFromAssignments(assignments);
+    public static JsonVal.Any AstToJson(AstNode astNode) =>
+        Impl.TestingApi.AstToJson(astNode);
 }
 
 /*public static class ApiV0

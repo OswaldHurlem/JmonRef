@@ -39,13 +39,13 @@ public static class Ast
 {
 
 
-    // [Fact]
-    // public static void Asdf()
-    // {
-    //     ReadOnlyMemory<byte>[,] cells = CsvUtil.MakeCells(JmonSampleNoAppend, "|");
-    //     LexedCell[,] lexedCells = TestingApi.LexCells(cells);
-    //     AstNode ast = TestingApi.ParseLexedCells(lexedCells);
-    //     var json = JsonSerializer.Serialize(ast, LibJmon.JsonSerialization.Resources.JsonSerializerOptions);
-    //     Console.WriteLine(json);
-    // }
+    [Fact]
+    public static void Asdf()
+    {
+        ReadOnlyMemory<byte>[,] cells = CsvUtil.MakeCells(TestRsrc.JmonSampleNoAppend, "|");
+        LexedCell[,] lexedCells = TestingApi.LexCells(cells);
+        AstNode ast = TestingApi.ParseLexedCells(lexedCells);
+        var json = JsonSerializer.Serialize(ast, LibJmon.JsonSerialization.Resources.JsonSerializerOptions);
+        Console.WriteLine(json);
+    }
 }

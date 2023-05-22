@@ -43,15 +43,19 @@ public static class JsonAnyExt
     }
 }
 
-public abstract record PathBase<TSelf>(ImmutableArray<PathItem> V)
-    where TSelf : PathBase<TSelf>, IImplicitConversion<TSelf, ImmutableArray<PathItem>>
+public abstract record PathBase(ImmutableArray<PathItem> Items, bool IsAppend)
 {
-    public virtual bool Equals(PathBase<TSelf>? other) => (other?.V)?.SequenceEqual(V) ?? false;
-    public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
-
-    public static TSelf Empty => ImmutableArray<PathItem>.Empty;
-    public static TSelf WithOneItem(PathItem item) => ImmutableArray.Create(item);
+    public virtual bool Equals(PathBase? other) =>
+        (other is not null) && (IsAppend == other.IsAppend) && Items.SequenceEqual(other.Items);
+    public override int GetHashCode() => Items.Aggregate(0, HashCode.Combine);
 }
+
+public sealed record LexedPath(ImmutableArray<PathItem> Items, bool IsAppend) : PathBase(Items, IsAppend)
+{
+    public bool IdxsAreValid() => Items.OfType<PathItem.Idx>().All(i => i.V is 0 or 1);
+}
+
+public sealed record ConvertedPath(ImmutableArray<PathItem> Items, bool IsAppend) : PathBase(Items, IsAppend);
 
 public abstract record PathItem : IUnion<PathItem, PathItem.Key, PathItem.Idx>
 {
@@ -68,32 +72,7 @@ public abstract record PathItem : IUnion<PathItem, PathItem.Key, PathItem.Idx>
     }
 }
 
-public sealed record LexedPath(ImmutableArray<PathItem> V) :
-    PathBase<LexedPath>(V), IImplicitConversion<LexedPath, ImmutableArray<PathItem>>
-{
-    public static implicit operator ImmutableArray<PathItem>(LexedPath from) => from.V;
-    public static implicit operator LexedPath(ImmutableArray<PathItem> to) => new(to);
-}
-
-public sealed record ConvertedPath(ImmutableArray<PathItem> V)
-    : PathBase<ConvertedPath>(V), IImplicitConversion<ConvertedPath, ImmutableArray<PathItem>>
-{
-    public static implicit operator ImmutableArray<PathItem>(ConvertedPath from) => from.V;
-    public static implicit operator ConvertedPath(ImmutableArray<PathItem> to) => new(to);
-}
-
-public static class PathUtil
-{
-    private static TPath CreateEmpty<TPath>()
-        where TPath : IImplicitConversion<TPath, ImmutableArray<PathItem>>
-    {
-        return ImmutableArray<PathItem>.Empty;
-    }
-    
-    
-}
-
-public enum MtxKind { Arr, Obj };
+public enum MtxKind { Arr = 0, Obj = 1 };
 
 public abstract record LexedCell
     : IUnion<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead, LexedCell.Error>
@@ -127,27 +106,23 @@ public abstract record LexedCell
     };
 }
 
-public abstract record AstNode : IUnion<AstNode, AstNode.Leaf, AstNode.Branch, AstNode.Error>
+public abstract record AstNode : IUnion<AstNode, AstNode.ValCell, AstNode.Matrix, AstNode.Error>
 {
-    public sealed record Leaf(JsonVal.Any V) : AstNode, IImplicitConversion<Leaf, JsonVal.Any>
+    public sealed record ValCell(JsonVal.Any V) : AstNode, IImplicitConversion<ValCell, JsonVal.Any>
     {
-        public static implicit operator Leaf(JsonVal.Any v) => new(v);
-        public static implicit operator JsonVal.Any(Leaf l) => l.V;
+        public static implicit operator ValCell(JsonVal.Any v) => new(v);
+        public static implicit operator JsonVal.Any(ValCell l) => l.V;
     }
 
-    public sealed record Branch(ImmutableArray<Branch.Item> V)
-        : AstNode, IImplicitConversion<Branch, ImmutableArray<Branch.Item>>
+    public sealed record Matrix(ImmutableArray<Matrix.Item> Items, MtxKind MtxKind) : AstNode
     {
         public readonly record struct Item(LexedPath Path, AstNode Node);
         
-        public static Branch Empty => new(ImmutableArray<Item>.Empty);
-        public static implicit operator ImmutableArray<Item>(Branch from) => from.V;
-
-        public static implicit operator Branch(ImmutableArray<Item> to) => new(to);
+        public bool Equals(Matrix? other) =>
+            (other is not null) && (MtxKind == other.MtxKind) && Items.SequenceEqual(other.Items);
+        public override int GetHashCode() => Items.Aggregate(0, HashCode.Combine);
         
-        private IStructuralEquatable AsStructEq => V;
-        public bool Equals(Branch? other) => StructuralComparisons.StructuralEqualityComparer.Equals(V, other?.V);
-        public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
+        public static Matrix Empty(MtxKind kind) => new(ImmutableArray<Matrix.Item>.Empty, kind);
     }
 
     public sealed record Error(string V) : AstNode, IImplicitConversion<Error, string>

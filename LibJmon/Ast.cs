@@ -12,47 +12,56 @@ namespace LibJmon.Impl;
 
 public static class Ast
 {
-    private static IEnumerable<(LexedPath path, int beg, int end)> GetPathRanges(IReadOnlyList<LexedCell> cellSeq)
+    private static IEnumerable<(IEnumerable<LexedPath> pathSeq, int beg, int end)>
+        GetPathRanges(IReadOnlyList<LexedCell> cells, IEnumerable<LexedPath> pathPrefix)
     {
-        var seq = cellSeq
-            .Select((cell, idx) => (path: (cell as LexedCell.Path)?.V, idx))
-            .Where(t => t.path is not null)
+        IEnumerable<LexedPath>? MakePathBuilder(LexedCell cell) =>
+            cell is LexedCell.Path pathCell
+                ? pathPrefix.Append(pathCell.V)
+                : null;
+        
+        var seq = cells
+            .Select((cell, idx) => (pathSeq: MakePathBuilder(cell), idx))
+            .Where(t => t.pathSeq is not null)
             .ToList();
         
-        var endsSeq = seq.Select(t => t.idx).Skip(1).Concat(new[] { cellSeq.Count });
-        
-        return seq.Zip(endsSeq, (t, end) => (t.path!, t.idx, end));
+        var endsSeq = seq.Select(t => t.idx).Skip(1).Concat(new[] { cells.Count });
+
+        return seq.Zip(endsSeq, (t, end) => (t.pathSeq!, t.idx, end));
     }
 
+    // Converts to AstNode.Mtx.Item
+    // LexedPaths combine by concatenation BUT only the last LexedPath can have IsAppend=true
+    private readonly record struct MtxItemProto(ImmutableArray<LexedPath> PathBuilder, AstNode Node);
+    
     // TODO return BadPathElmt
-    private static IEnumerable<AstNode.Branch.Item>
-        ParsePathCols(SubSheet<LexedCell> pathCols, SubSheet<LexedCell> pathRows, SubSheet<LexedCell> interior)
+    private static IEnumerable<MtxItemProto> ParsePathCols(
+            IEnumerable<LexedPath> pathPrefix,
+            SubSheet<LexedCell> pathCols,
+            SubSheet<LexedCell> pathRows,
+            SubSheet<LexedCell> interior
+        )
     {
-        var seq = GetPathRanges(pathCols.SliceCols(..1).CellSeq().ToList());
+        var seq = GetPathRanges(pathCols.SliceCols(..1).CellSeq().ToList(), pathPrefix);
         var remCols = pathCols.SliceCols(1..);
-        
-        if (remCols.Rect.Dims().Col == 0)
-        {
-            foreach (var (path, begRow, endRow) in seq)
-            {
-                AstNode.Branch prop = ParsePathRows(pathRows, interior.SliceRows(begRow..endRow)).ToImmutableArray();
-                yield return new(path, prop);
-            }
-            yield break;
-        }
-        
-        foreach (var (path, begRow, endRow) in seq)
-        {
-            var desc = ParsePathCols(remCols.SliceRows(begRow..endRow), pathRows, interior.SliceRows(begRow..endRow));
-            AstNode.Branch prop = desc.ToImmutableArray();
-            yield return new(path, prop);
-        }
+        bool goToRows = remCols.Rect.Dims().Col == 0;
+
+        return seq.SelectMany(
+            t => goToRows
+                ? ParsePathRows(t.pathSeq, pathRows, interior.SliceRows(t.beg..t.end))
+                : ParsePathCols(t.pathSeq, remCols.SliceRows(t.beg..t.end), pathRows, interior.SliceRows(t.beg..t.end))
+            // );
+        ).ToList(); // TODO remove
     }
 
-    private static IEnumerable<AstNode.Branch.Item>
-        ParsePathRows(SubSheet<LexedCell> pathRows, SubSheet<LexedCell> interior)
+    private static IEnumerable<MtxItemProto>
+        ParsePathRows(
+            IEnumerable<LexedPath> pathPrefix,
+            SubSheet<LexedCell> pathRows,
+            SubSheet<LexedCell> interior
+        )
     {
-        var seq = GetPathRanges(pathRows.SliceRows(0..1).CellSeq().ToList());
+        var seq = GetPathRanges(pathRows.SliceRows(0..1).CellSeq().ToList(), pathPrefix);
         var remRows = pathRows.SliceRows(1..);
 
         if (remRows.Rect.Dims().Row == 0)
@@ -60,16 +69,15 @@ public static class Ast
             foreach (var (path, begCol, endCol) in seq)
             {
                 var valOrNone = ParseJmon(interior.SliceCols(begCol..endCol));
-                if (valOrNone.TryPickT0(out var val, out _)) { yield return new(path, val); }
+                if (valOrNone.TryPickT0(out var val, out _)) { yield return new(path.ToImmutableArray(), val); }
             }
             yield break;
         }
 
         foreach (var (path, begCol, endCol) in seq)
         {
-            var desc = ParsePathRows(remRows.SliceCols(begCol..endCol), interior.SliceCols(begCol..endCol));
-            var prop = new AstNode.Branch(desc.ToImmutableArray());
-            yield return new(path, prop);
+            var subSeq = ParsePathRows(path, remRows.SliceCols(begCol..endCol), interior.SliceCols(begCol..endCol));
+            foreach (var item in subSeq) { yield return item; }
         }
     }
 
@@ -99,7 +107,7 @@ public static class Ast
             return FindStray(subSheet, 1, cell => cell is not LexedCell.Blank) switch
             {
                 { } strayInEmptyMtx => strayInEmptyMtx,
-                _ => AstNode.Branch.Empty
+                _ => AstNode.Matrix.Empty(mtxKind)
             };
         }
 
@@ -124,19 +132,40 @@ public static class Ast
             var pathJson = JsonSerializer.Serialize(path, JsonSerialization.Resources.JsonSerializerOptions);
             return new AstNode.Error($"Path {pathJson} not valid for matrix of kind {mtxKind}");
         }
+
+        var mtxProtoItems = ParsePathCols(Enumerable.Empty<LexedPath>(), pathCols, pathRows, interior);
+        List<AstNode.Matrix.Item> mtxItems = new();
+
+        foreach (var (pathBuilder, node) in mtxProtoItems)
+        {
+            if (pathBuilder[..^1].Any(path => path.IsAppend))
+            {
+                return new AstNode.Error("TODO"); // TODO
+            }
+
+            LexedPath combinedPath = new(
+                pathBuilder.SelectMany(path => path.Items).ToImmutableArray(),
+                pathBuilder.Last().IsAppend
+            );
+
+            if (!combinedPath.Items.Any())
+            {
+                return new AstNode.Error("Empty path"); // TODO
+            }
+            
+            var expMtxKind = combinedPath.Items.First().AsOneOf().Match(key => MtxKind.Obj, idx => MtxKind.Arr);
+
+            if (expMtxKind != mtxKind)
+            {
+                // TODO improve
+                var pathJson = JsonSerializer.Serialize(combinedPath, JsonSerialization.Resources.JsonSerializerOptions);
+                return new AstNode.Error($"Path {pathJson} not valid for matrix of kind {mtxKind}");
+            }
+
+            mtxItems.Add(new(combinedPath, node));
+        }
         
-        AstNode? MtxKindErrorOrNull(AstNode.Branch b) =>
-            b.V.Select(item =>
-                item.Path.V.Any()
-                    ? item.Path.V.First().AsOneOf().Match(
-                        key => (mtxKind == MtxKind.Obj) ? kNotErr : ErrorForPath(item.Path),
-                        idx => (mtxKind == MtxKind.Arr) ? kNotErr : ErrorForPath(item.Path)
-                    )
-                    : item.Node.AsOneOf().Match(leaf => kNotErr, MtxKindErrorOrNull, err => kNotErr)
-            ).FirstOrDefault(e => e is not null);
-        
-        AstNode.Branch branch = ParsePathCols(pathCols, pathRows, interior).ToImmutableArray();
-        return MtxKindErrorOrNull(branch) ?? branch;
+        return new AstNode.Matrix(mtxItems.ToImmutableArray(), mtxKind);
     }
 
     public static OneOf<AstNode, None> ParseJmon(SubSheet<LexedCell> subSheet)
@@ -162,7 +191,7 @@ public static class Ast
             LexedCell.JVal jVal => valRange.CoordAndCellSeq().Skip(1).Find(cell => cell is not LexedCell.Blank) switch
             {
                 { } strayCoord => StrayCellAtInnerCoord(valRange, strayCoord),
-                _ => new AstNode.Leaf(jVal.V)
+                _ => new AstNode.ValCell(jVal.V)
             },
             LexedCell.MtxHead mtxHead => ParseMtx(valRange),
             _ => throw new UnreachableException()

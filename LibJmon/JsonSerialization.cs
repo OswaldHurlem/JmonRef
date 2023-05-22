@@ -22,13 +22,10 @@ public static class Resources
             };
             
             o.Converters.Add(new JsonAny_Converter());
-            o.Converters.Add(new LexedPath_Converter());
             o.Converters.Add(new LexedCell_Path_Converter());
             o.Converters.Add(new LexedCell_JVal_Converter());
             o.Converters.Add(new LexedCell_Error_Converter());
-            o.Converters.Add(new ConvertedPath_Converter());
-            o.Converters.Add(new AstNode_Leaf_Converter());
-            o.Converters.Add(new AstNode_Branch_Converter());
+            o.Converters.Add(new AstNode_ValCell_Converter());
             o.Converters.Add(new AstNode_Error_Converter());
             o.Converters.Add(new JsonStrConverter());
             o.Converters.Add(new PathBaseItemConverter());
@@ -63,17 +60,11 @@ public sealed class JsonAny_Converter : JsonConverter<JsonVal.Any>
     public override bool HandleNull => true;
 }
 
-public sealed class LexedPath_Converter : ImplicitConverter<LexedPath, ImmutableArray<PathItem>> { }
-
 public sealed class LexedCell_Path_Converter : ImplicitConverter<LexedCell.Path, LexedPath> { }
 public sealed class LexedCell_JVal_Converter : ImplicitConverter<LexedCell.JVal, JsonVal.Any> { }
 public sealed class LexedCell_Error_Converter : ImplicitConverter<LexedCell.Error, string> { }
 
-public sealed class ConvertedPath_Converter : ImplicitConverter<ConvertedPath, ImmutableArray<PathItem>> { }
-
-public sealed class AstNode_Leaf_Converter : ImplicitConverter<AstNode.Leaf, JsonVal.Any> { }
-public sealed class AstNode_Branch_Converter
-    : ImplicitConverter<AstNode.Branch, ImmutableArray<AstNode.Branch.Item>> { }
+public sealed class AstNode_ValCell_Converter : ImplicitConverter<AstNode.ValCell, JsonVal.Any> { }
 public sealed class AstNode_Error_Converter : ImplicitConverter<AstNode.Error, string> { }
 
 public sealed class JsonStrConverter : JsonConverter<JsonVal.Str>
@@ -249,4 +240,4 @@ public abstract class UnionConverter<TBase, TDer0, TDer1, TDer2, TDer3, TDer4> :
 public sealed class LexedCellConverter
     : UnionConverter<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead, LexedCell.Error> { }
 public sealed class JsonValConverter : UnionConverter<JsonVal, JsonVal.Any, JsonVal.Str> { }
-public sealed class AstNodeConverter : UnionConverter<AstNode, AstNode.Leaf, AstNode.Branch, AstNode.Error> { }
+public sealed class AstNodeConverter : UnionConverter<AstNode, AstNode.ValCell, AstNode.Matrix, AstNode.Error> { }

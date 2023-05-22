@@ -31,13 +31,14 @@ public static class Serialization
     {
         var t0 = MakePathIdx();
         var t1 = MakePathKey();
-        return ($"[{t0.jsonCode},{t1.jsonCode}]", new(ImmutableArray.Create(t0.arrElmt as PathItem, t1.keyElmt)));
+        LexedPath path = new(ImmutableArray.Create(t0.arrElmt as PathItem, t1.keyElmt), false);
+        return ($"{{\"Items\":[{t0.jsonCode},{t1.jsonCode}],\"IsAppend\":false}}", path);
     }
 
-    private static (string jsonCode, AstNode.Leaf nodeLeaf) MakeAstNodeLeaf()
+    private static (string jsonCode, AstNode.ValCell nodeLeaf) MakeAstValCell()
     {
         var (expSerialized, jsonAny) = MakeJsonAny();
-        return ($@"{{""Type"":""Leaf"",""Val"":{expSerialized}}}", jsonAny);
+        return ($@"{{""Type"":""ValCell"",""Val"":{expSerialized}}}", jsonAny);
     }
 
     [Fact]
@@ -144,9 +145,9 @@ public static class Serialization
     {
         PathItem a = new PathItem.Key("a"u8.ToImmutableArray());
         PathItem i = new PathItem.Idx(0);
-        ConvertedPath path = new(ImmutableArray.Create(a, i));
+        ConvertedPath path = new(ImmutableArray.Create(a, i), false);
         var serialized = JsonSerializer.Serialize(path, Resources.JsonSerializerOptions);
-        Assert.Equal("[\"a\",0]", serialized);
+        Assert.Equal(@"{""Items"":[""a"",0],""IsAppend"":false}", serialized);
         var deserialized = JsonSerializer.Deserialize<ConvertedPath>(serialized, Resources.JsonSerializerOptions);
         Assert.Equal(path, deserialized);
     }
@@ -154,7 +155,7 @@ public static class Serialization
     [Fact]
     private static void AstNodeLeafSerializes()
     {
-        (string expJson, AstNode leaf) = MakeAstNodeLeaf();
+        (string expJson, AstNode leaf) = MakeAstValCell();
         var serialized = JsonSerializer.Serialize(leaf, Resources.JsonSerializerOptions);
         Assert.Equal(expJson, serialized);
         var deserialized = JsonSerializer.Deserialize<AstNode>(serialized, Resources.JsonSerializerOptions);
@@ -162,18 +163,18 @@ public static class Serialization
     }
 
     [Fact]
-    private static void AstResultNodeBranchSerializes()
+    private static void AstMatrixSerializes()
     {
-        var (expLeafSzd, leaf) = MakeAstNodeLeaf();
+        var (expLeafSzd, leaf) = MakeAstValCell();
         var (expPathSzd, path) = MakeLexedPath();
-        AstNode.Branch.Item item = new(path, leaf);
-        AstNode branch = new AstNode.Branch(ImmutableArray.Create(item));
-        var serialized = JsonSerializer.Serialize(branch, Resources.JsonSerializerOptions);
+        AstNode.Matrix.Item item = new(path, leaf);
+        AstNode matrix = new AstNode.Matrix(ImmutableArray.Create(item), MtxKind.Obj);
+        var serialized = JsonSerializer.Serialize(matrix, Resources.JsonSerializerOptions);
         var expInner = $@"[{{""Path"":{expPathSzd},""Node"":{expLeafSzd}}}]";
-        var expJson = @$"{{""Type"":""Branch"",""Val"":{expInner}}}";
+        var expJson = @$"{{""Type"":""Matrix"",""Val"":{{""Items"":{expInner},""MtxKind"":1}}}}";
         Assert.Equal(expJson, serialized);
         var deserialized = JsonSerializer.Deserialize<AstNode>(serialized, Resources.JsonSerializerOptions);
-        Assert.Equal(branch, deserialized);
+        Assert.Equal(matrix, deserialized);
     }
 
     [Fact]

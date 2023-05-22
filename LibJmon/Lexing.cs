@@ -72,29 +72,37 @@ public static class Lexing
         
         if (trimmedText.StartsWith('.'))
         {
+            if (trimmedText == ".")
+            {
+                LexedPath emptyPath = new(ImmutableArray<PathItem>.Empty, false);
+                return new LexedCell.Path(emptyPath);
+            }
+            
             var textAfterDot = trimmedText[1..];
-            if (textAfterDot == "") { return new LexedCell.Path(LexedPath.Empty); }
             var pathAsJsonParse = TryParseJsonExpr(textAfterDot);
 
+            if (pathAsJsonParse.TryPickT1(out string errMsg, out _)) { return new LexedCell.Error(errMsg); }  // TODO
             if (pathAsJsonParse.TryPickT0(out JsonVal.Any pathAsJson, out _))
             {
                 LexedCell CheckPathAndMakeCell(LexedPath p) =>
-                    p.V.OfType<PathItem.Idx>().All(item => item.V is 1 or 0)
+                    p.IdxsAreValid()
                         ? new LexedCell.Path(p)
                         : new LexedCell.Error("Path expressed as JSON must only contain index entries equal to 0 or 1");
                 
                 return pathAsJson.TryDeserialize<LexedPath>()
                     .MapT0(CheckPathAndMakeCell)
                     .MapT1(_ => pathAsJson.TryDeserialize<PathItem>()
-                        .MapT0(LexedPath.WithOneItem)
+                        .MapT0(item => new LexedPath(ImmutableArray.Create(item), false))
                         .MapT0(CheckPathAndMakeCell)
                         .Match(c => c, _ => new LexedCell.Error("JSON expression is not a LexedPath or PathItem"))
                     )
                     .Match(c => c, c => c);
             }
-            if (pathAsJsonParse.TryPickT1(out string errMsg, out _)) { return new LexedCell.Error(errMsg); }  // TODO
 
             var segments = textAfterDot.Split('.');
+            bool isAppend = segments[^1] == "+*";
+            if (isAppend) { segments = segments[..^1]; }
+            
             var pathElmts = new PathItem[segments.Length];
 
             foreach (var (segment, idx) in segments.Select((s, i) => (s, i)))
@@ -107,6 +115,8 @@ public static class Lexing
                     case "$":
                         pathElmts[idx] = new PathItem.Idx(0);
                         continue;
+                    case "+*":
+                        return new LexedCell.Error("Append operator '+*' must be the last element of the path");
                     default:
                         if (!Regex.IsMatch(segment, @"^\w+$"))
                         {
@@ -117,10 +127,12 @@ public static class Lexing
                         continue;
                 }
             }
-
-            return new LexedCell.Path(pathElmts.ToImmutableArray());
+            
+            LexedPath path = new(pathElmts.ToImmutableArray(), isAppend);
+            return new LexedCell.Path(path);
         }
 
+        // String Cell
         JsonVal.Any jsonValue = JsonSerializer.SerializeToNode(trimmedText, jsonOpts);
         return new LexedCell.JVal(jsonValue);
     }
