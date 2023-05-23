@@ -12,7 +12,6 @@ public static class Lexing
         "Expected depth to be zero at the end of the JSON payload. " +
         "There is an open JSON object or array that should be closed. " +
         "Path: $ | LineNumber: 0 | BytePositionInLine: 1.";
-    // {"Items":[],IsAppend:false}}
     [Theory]
     [InlineData(""" :[                          """, """ {"Type":"MtxHead","Val":{"Kind":0,"IsTp":false}}          """)]
     [InlineData(""" :^[                         """, """ {"Type":"MtxHead","Val":{"Kind":0,"IsTp":true}}           """)]
@@ -23,6 +22,7 @@ public static class Lexing
     [InlineData(""" .+                          """, """ {"Type":"Path","Val":{"Items":[1],"IsAppend":false}}      """)]
     [InlineData(""" .$                          """, """ {"Type":"Path","Val":{"Items":[0],"IsAppend":false}}      """)]
     [InlineData(""" .$.+.a                      """, """ {"Type":"Path","Val":{"Items":[0,1,"a"],"IsAppend":false}}""")]
+    [InlineData(""" .a.+*                       """, """ {"Type":"Path","Val":{"Items":["a"],"IsAppend":true}}     """)]
     [InlineData(""" .:'a'                       """, """ {"Type":"Path","Val":{"Items":["a"],"IsAppend":false}}    """)]
     [InlineData(""" .::"a"                      """, """ {"Type":"Path","Val":{"Items":["a"],"IsAppend":false}}    """)]
     [InlineData(""" i'm cool                    """, """ {"Type":"JVal","Val":"i\u0027m cool"}            """)]
@@ -35,12 +35,10 @@ public static class Lexing
     [InlineData(""" ::'i\'m cool'               """, """ {"Type":"JVal","Val":"i\u0027m cool"}            """)]
     [InlineData("""                             """, """ {"Type":"Blank","Val":{}}                        """)]
     [InlineData(""" // comment                  """, """ {"Type":"Blank","Val":{}}                        """)]
-    
-    // TODO fix
-    /*[InlineData(
-        """.:{"Items":[0,1,'a'],"IsAppend":false}""",
-        """{"Type":"Path","Val":[0,1,"a"]}"""
-    )]*/
+    [InlineData(
+        """.::{"Items":[0,1,"a"],"IsAppend":false}""",
+        """{"Type":"Path","Val":{"Items":[0,1,"a"],"IsAppend":false}}"""
+    )]
     public static void CellLexesTo(string cellText, string expJson)
     {
         ReadOnlyMemory<byte>[,] grid = { { Encoding.UTF8.GetBytes(cellText).AsMemory() } };

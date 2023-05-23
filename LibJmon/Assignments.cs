@@ -1,4 +1,5 @@
 ﻿using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using LibJmon.Linq;
 using LibJmon.SuperTypes;
@@ -44,11 +45,12 @@ public static class Assignments
         
         Dictionary<ConvertedPath, int> idxForPartialPath = new();
         
-        const string placeHolderPropName = "\uE0E1";
-        JsonNode MakeValPlaceholder() => new JsonObject { { placeHolderPropName, null } };
-        bool IsValPlaceholder(JsonNode? node) => node is JsonObject obj && obj.ContainsKey(placeHolderPropName);
-        
+        HashSet<JsonNode> sealedNodes = new();
+        List<(JsonArray, int)> nullsInArrays = new();
+        List<(JsonObject, string)> nullsInObjects = new();
         JsonNode root = matrix.MtxKind == MtxKind.Arr ? new JsonArray() : new JsonObject();
+        
+        JsonNode MakeNullPlaceholder() => new JsonObject { { "\uE0E1", null } };
         
         JsonNode? AddOrReturnExisting(JsonNode parent, PathItem pathItem, JsonNode? child)
         {
@@ -69,8 +71,6 @@ public static class Assignments
                 }
             );
         }
-        
-        List<(JsonNode, PathItem, AstNode)> assignmentsToDo = new();
 
         foreach (var (path, astNode) in matrix.Items)
         {
@@ -81,40 +81,69 @@ public static class Assignments
             {
                 JsonNode newChild = elmtNPlus1.AsOneOf().Match<JsonNode>(k => new JsonObject(), i => new JsonArray());
                 curNode = AddOrReturnExisting(curNode, elmtN, newChild)!;
-                if (IsValPlaceholder(curNode)) { throw new Exception("Implicitly setting fields of value"); } // TODO
+                if (sealedNodes.Contains(curNode)) { throw new Exception("Implicit modification of sealed node"); } // TODO
             }
-            
-            var newPlaceholder = MakeValPlaceholder();
-            bool phAdded = object.ReferenceEquals(
-                newPlaceholder,
-                AddOrReturnExisting(curNode, cvtPath.Items[^1], newPlaceholder)
-            );
-            
-            if (!phAdded) { throw new Exception("Cannot assign"); } // TODO
-            
-            assignmentsToDo.Add((curNode, cvtPath.Items[^1], astNode));
-        }
-        
-        foreach (var (node, path, astNode) in assignmentsToDo)
-        {
-            JsonVal.Any jVal = AstToJson(astNode);
 
-            path.AsOneOf().Switch(
-                key =>
+            if (path.IsAppend)
+            {
+                JsonVal.Any srcVal = AstToJson(astNode);
+                if (srcVal.V is not JsonObject or JsonArray) { throw new Exception(); } // TODO
+                var dstNode = AddOrReturnExisting(curNode, cvtPath.Items[^1], srcVal.V);
+
+                if (!object.ReferenceEquals(dstNode, srcVal.V))
                 {
-                    var keyStr = key.V.ToUtf16String();
-                    // TODO: I think this is impossible
-                    if (!IsValPlaceholder(node[keyStr])) { throw new Exception("TODO"); }
-                    node[keyStr] = jVal; // TODO: or append!!
-                },
-                idx =>
-                {
-                    // TODO: I think this is impossible
-                    if (!IsValPlaceholder(node[idx])) { throw new Exception("TODO"); }
-                    node[idx] = jVal; // TODO: or append!!
+                    switch (dstNode)
+                    {
+                        case JsonObject dstObj:
+                        {
+                            if (srcVal.V is not JsonObject srcObj) { throw new Exception(); } // TODO
+                            foreach (var (key, val) in srcObj.ToList())
+                            {
+                                if (dstObj.ContainsKey(key)) { throw new Exception("TODO"); } // TODO
+                                srcObj[key] = null;
+                                dstObj[key] = val;
+                            }
+                            break;
+                        }
+                        case JsonArray dstArr:
+                        {
+                            if (srcVal.V is not JsonArray srcArr) { throw new Exception(); } // TODO
+                            foreach (var idx in Enumerable.Range(0, srcArr.Count))
+                            {
+                                var val = srcArr[idx];
+                                srcArr[idx] = null;
+                                dstArr.Add(val);
+                            }
+                            break;
+                        }
+                        default: throw new Exception("TODO");
+                    }
                 }
-            );
+                
+                sealedNodes.Add(dstNode);
+            }
+            else
+            {
+                JsonVal.Any jVal = AstToJson(astNode);
+
+                if (jVal.V is not JsonNode jNode)
+                {
+                    jNode = MakeNullPlaceholder();
+                    cvtPath.Items[^1].AsOneOf().Switch(
+                        key => { nullsInObjects.Add((curNode.AsObject(), key.V.ToUtf16String())); },
+                        idx => { nullsInArrays.Add((curNode.AsArray(), idx)); }
+                    );
+                }
+                
+                bool nodeAdded = object.ReferenceEquals(jNode, AddOrReturnExisting(curNode, cvtPath.Items[^1], jNode));
+                if (!nodeAdded) { throw new Exception("Cannot assign"); } // TODO
+                
+                sealedNodes.Add(jNode);
+            }
         }
+
+        foreach (var (objNode, key) in nullsInObjects) { objNode[key] = null; }
+        foreach (var (arrNode, idx) in nullsInArrays) { arrNode[idx] = null; }
 
         return root;
     }
