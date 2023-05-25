@@ -16,7 +16,7 @@ public static class KnownBugs
             .+,00,01
             """;
 
-        ReadOnlyMemory<byte>[,] cells = CsvUtil.MakeCells(aoaCsv, ",");
+        string[,] cells = CsvUtil.MakeCells(aoaCsv, ",");
         LexedCell[,] lexedCells = TestingApi.LexCells(cells);
         AstNode ast = TestingApi.ParseLexedCells(lexedCells);
         var parsedVal = LibJmon.TestingApi.AstToJson(ast);

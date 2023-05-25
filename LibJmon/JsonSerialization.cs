@@ -67,18 +67,7 @@ public sealed class LexedCell_Error_Converter : ImplicitConverter<LexedCell.Erro
 public sealed class AstNode_ValCell_Converter : ImplicitConverter<AstNode.ValCell, JsonVal.Any> { }
 public sealed class AstNode_Error_Converter : ImplicitConverter<AstNode.Error, string> { }
 
-public sealed class JsonStrConverter : JsonConverter<JsonVal.Str>
-{
-    public override JsonVal.Str? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-    {
-        var buffer = new byte[reader.HasValueSequence ? (int)reader.ValueSequence.Length : reader.ValueSpan.Length];
-		int charsRead = reader.CopyString(buffer);
-        return new JsonVal.Str(buffer[0..charsRead].ToImmutableArray());
-    }
-
-    public override void Write(Utf8JsonWriter writer, JsonVal.Str value, JsonSerializerOptions options) =>
-        writer.WriteStringValue(value.V.AsSpan());
-}
+public sealed class JsonStrConverter : ImplicitConverter<JsonVal.Str, string> { }
 
 public class PathBaseItemConverter : JsonConverter<PathItem>
 {

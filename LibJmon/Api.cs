@@ -6,7 +6,7 @@ namespace LibJmon;
 
 public static class TestingApi
 {
-    public static LexedCell[,] LexCells(ReadOnlyMemory<byte>[,] cells) =>
+    public static LexedCell[,] LexCells(string[,] cells) =>
         Impl.TestingApi.LexCells(cells);
     
     public static AstNode ParseLexedCells(LexedCell[,] lexedCells) =>

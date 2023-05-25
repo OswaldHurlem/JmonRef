@@ -22,15 +22,12 @@ public abstract record JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str> // IT
         public override int GetHashCode() => V?.ToJsonString()?.GetHashCode() ?? 0;
     }
     
-    public sealed record Str(ImmutableArray<byte> V) : JsonVal, IImplicitConversion<Str, ImmutableArray<byte>>
+    public sealed record Str(string V) : JsonVal, IImplicitConversion<Str, string>
     {
-        public static implicit operator Str(ImmutableArray<byte> v) => new(v);
-        public static implicit operator ImmutableArray<byte>(Str v) => v.V;
+        public static implicit operator Str(string v) => new(v);
+        public static implicit operator string(Str v) => v.V;
 
-        public bool Equals(Str? other) => (other?.V)?.SequenceEqual(V) ?? false;
-        public override int GetHashCode() => V.Aggregate(0, HashCode.Combine);
-
-        public string ToUtf16String() => Encoding.UTF8.GetString(V.AsSpan());
+        public string ToUtf16String() => V; // Encoding.UTF8.GetString(V.AsSpan());
     }
 }
 

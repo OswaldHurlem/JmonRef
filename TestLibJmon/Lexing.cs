@@ -41,7 +41,7 @@ public static class Lexing
     )]
     public static void CellLexesTo(string cellText, string expJson)
     {
-        ReadOnlyMemory<byte>[,] grid = { { Encoding.UTF8.GetBytes(cellText).AsMemory() } };
+        string[,] grid = { { cellText } };
         LexedCell[,] lexedCells = TestingApi.LexCells(grid);
         var json = JsonSerializer.Serialize(lexedCells[0, 0], Resources.JsonSerializerOptions);
         Assert.Equal(expJson.Trim(), json);
@@ -58,7 +58,7 @@ public static class Lexing
     [InlineData(""" : """)]
     public static void ErrorWhenLexing(string cellText)
     {
-        ReadOnlyMemory<byte>[,] grid = { { Encoding.UTF8.GetBytes(cellText).AsMemory() } };
+        string[,] grid = { { cellText } };
         LexedCell[,] lexedCells = TestingApi.LexCells(grid);
         Assert.IsType<LexedCell.Error>(lexedCells[0,0]);
     }

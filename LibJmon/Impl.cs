@@ -14,14 +14,14 @@ namespace LibJmon.Impl;
 
 public static class TestingApi
 {
-    public static LexedCell[,] LexCells(ReadOnlyMemory<byte>[,] cells)
+    public static LexedCell[,] LexCells(string[,] cells)
     {
         var rect = new Rect((0, 0), (cells.GetLength(0), cells.GetLength(1)));
         var lexedCells = new LexedCell[rect.Dims().Row, rect.Dims().Col];
 
         foreach (var c in rect.CoordSeq())
         {
-            lexedCells[c.Row, c.Col] = Lexing.Lex(cells[c.Row, c.Col].Span);
+            lexedCells[c.Row, c.Col] = Lexing.Lex(cells[c.Row, c.Col]);
         }
         
         return lexedCells;
@@ -48,9 +48,9 @@ public static class TestingApi
 
 public static class CsvUtil
 {
-    public static ReadOnlyMemory<byte>[,] MakeCells(TextReader textReader, string delimiter)
+    public static string[,] MakeCells(TextReader textReader, string delimiter)
     {
-        IEnumerable<IReadOnlyList<ReadOnlyMemory<byte>>> Inner()
+        IEnumerable<IReadOnlyList<string>> Inner()
         {
             using var csvReader = new TextFieldParser(textReader)
             {
@@ -60,32 +60,29 @@ public static class CsvUtil
 
             while (!csvReader.EndOfData)
             {
-                var row = csvReader.ReadFields();
-                if (row is null) { throw new Exception("null row"); }
-                yield return row.Select(field => (ReadOnlyMemory<byte>)Encoding.UTF8.GetBytes(field)).ToList();
+                if (csvReader.ReadFields() is { } row) { yield return row; }
+                else { throw new Exception("null row"); }
             }
         }
 
         var rows = Inner().ToList();
         var rect = new Rect((0, 0), (rows.Count, rows.Max(row => row.Count)));
-        var cells = new ReadOnlyMemory<byte>[rect.Dims().Row, rect.Dims().Col];
+        var cells = new string[rect.Dims().Row, rect.Dims().Col];
         foreach (var coord in rect.CoordSeq())
         {
-            cells[coord.Row, coord.Col] = coord.Col < rows[coord.Row].Count
-                ? rows[coord.Row][coord.Col]
-                : ReadOnlyMemory<byte>.Empty;
+            cells[coord.Row, coord.Col] = coord.Col < rows[coord.Row].Count ? rows[coord.Row][coord.Col] : string.Empty;
         }
         
         return cells;
     }
     
-    public static ReadOnlyMemory<byte>[,] MakeCells(string text, string delimiter)
+    public static string[,] MakeCells(string text, string delimiter)
     {
         using var stringReader = new StringReader(text);
         return MakeCells(stringReader, delimiter);
     }
 
-    public static ReadOnlyMemory<byte>[,] MakeCells(Stream stream, string delimiter)
+    public static string[,] MakeCells(Stream stream, string delimiter)
     {
         using var streamReader = new StreamReader(stream);
         return MakeCells(streamReader, delimiter);

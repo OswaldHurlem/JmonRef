@@ -9,7 +9,7 @@ public static class Assignment
     [Fact]
     public static void TempTest3()
     {
-        ReadOnlyMemory<byte>[,] cells = CsvUtil.MakeCells(TestRsrc.JmonSampleNoAppend, "|");
+        string[,] cells = CsvUtil.MakeCells(TestRsrc.JmonSampleNoAppend, "|");
         LexedCell[,] lexedCells = TestingApi.LexCells(cells);
         AstNode ast = TestingApi.ParseLexedCells(lexedCells);
         var parsedVal = LibJmon.TestingApi.AstToJson(ast);

@@ -10,7 +10,7 @@ namespace TestLibJmon;
 
 public static class Serialization
 {
-    private static (string jsonCode, JsonVal.Str jsonStr) MakeJsonStr() => ("\"a\"", new("a"u8.ToImmutableArray()));
+    private static (string jsonCode, JsonVal.Str jsonStr) MakeJsonStr() => ("\"a\"", "a");
 
     private static (string jsonCode, JsonVal.Any jsonAny) MakeJsonAny() =>
     (
@@ -54,7 +54,7 @@ public static class Serialization
     [Fact]
     private static void JsonStrSerializes()
     {
-        var strObj = new JsonVal.Str("&<>"u8.ToImmutableArray());
+        var strObj = new JsonVal.Str("&<>");
         var jsonCode = "\"" + JavaScriptEncoder.Default.Encode("&<>") + "\"";
         var serialized = JsonSerializer.Serialize(strObj, Resources.JsonSerializerOptions);
         Assert.Equal(jsonCode, serialized);
@@ -143,7 +143,7 @@ public static class Serialization
     [Fact]
     private static void ConvertedPathSerializes()
     {
-        PathItem a = new PathItem.Key("a"u8.ToImmutableArray());
+        PathItem a = new PathItem.Key("a");
         PathItem i = new PathItem.Idx(0);
         ConvertedPath path = new(ImmutableArray.Create(a, i), false);
         var serialized = JsonSerializer.Serialize(path, Resources.JsonSerializerOptions);

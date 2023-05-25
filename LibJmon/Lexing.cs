@@ -47,9 +47,8 @@ public static class Lexing
         catch (JsonException e) { return e.Message; }
     }
 
-    public static LexedCell Lex(ReadOnlySpan<byte> cellTextUtf8)
+    public static LexedCell Lex(string cellText)
     {
-        var cellText = Encoding.UTF8.GetString(cellTextUtf8);
         var jsonOpts = JsonSerialization.Resources.JsonSerializerOptions;
         
         var trimmedText = cellText.Trim();
@@ -122,8 +121,7 @@ public static class Lexing
                         {
                             return new LexedCell.Error(@"Path elements must match regex ^\w+$");
                         }
-                        var segmentUtf8 = Encoding.UTF8.GetBytes(segment).ToImmutableArray();
-                        pathElmts[idx] = new PathItem.Key(segmentUtf8);
+                        pathElmts[idx] = new PathItem.Key(segment);
                         continue;
                 }
             }

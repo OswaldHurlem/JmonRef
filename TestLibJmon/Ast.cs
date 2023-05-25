@@ -47,7 +47,7 @@ public static class Ast
     [Fact]
     public static void Asdf()
     {
-        ReadOnlyMemory<byte>[,] cells = CsvUtil.MakeCells(TestRsrc.JmonSampleNoAppend, "|");
+        string[,] cells = CsvUtil.MakeCells(TestRsrc.JmonSampleNoAppend, "|");
         LexedCell[,] lexedCells = TestingApi.LexCells(cells);
         AstNode ast = TestingApi.ParseLexedCells(lexedCells);
         var json = JsonSerializer.Serialize(ast, LibJmon.JsonSerialization.Resources.JsonSerializerOptions);
