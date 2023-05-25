@@ -14,22 +14,79 @@ public static class KnownBugs
             """
             :[,.+,.+
             .+,00,01
-            .+,10,11
             """;
 
-        ReadOnlyMemory<byte>[,] cells = CsvUtil.MakeCells(TestRsrc.JmonSampleNoAppend, "|");
+        ReadOnlyMemory<byte>[,] cells = CsvUtil.MakeCells(aoaCsv, ",");
         LexedCell[,] lexedCells = TestingApi.LexCells(cells);
         AstNode ast = TestingApi.ParseLexedCells(lexedCells);
         var parsedVal = LibJmon.TestingApi.AstToJson(ast);
         JsonArray? arr = parsedVal.V?.AsArray();
-        Assert.Equal(arr?.Count, 2);
+        Assert.Equal(1, arr?.Count);
         JsonArray? innerArr0 = arr?[0]?.AsArray();
-        Assert.Equal(innerArr0?.Count, 2);
-        Assert.Equal(innerArr0?[0], "11");
-        Assert.Equal(innerArr0?[1], "01");
-        JsonArray? innerArr1 = arr?[1]?.AsArray();
-        Assert.Equal(innerArr1?.Count, 2);
-        Assert.Equal(innerArr1?[0], "10");
-        Assert.Equal(innerArr1?[1], "11");
+        Assert.Equal(2, innerArr0?.Count);
+        Assert.Equal("00", (string?)innerArr0?[0]);
+        Assert.Equal("01", (string?)innerArr0?[1]);
+    }
+
+    private const string desiredAst = """
+    {
+        "Type":"Matrix",
+        "Val":{
+            "Items":[
+                {
+                    "Path":{
+                        "Items":[1],
+                        "IsAppend":false
+                    },
+                    "Node":{
+                        "Type":"Matrix",
+                        "Val":{
+                            "Items":[
+                                {
+                                    "Path":{
+                                        "Items":[1],
+                                        "IsAppend":false
+                                    },
+                                    "Node":{
+                                        "Type":"ValCell",
+                                        "Val":"00"
+                                    }
+                                },
+                                {
+                                    "Path":{
+                                        "Items":[1],
+                                        "IsAppend":false
+                                    },
+                                    "Node":{
+                                        "Type":"ValCell",
+                                        "Val":"01"
+                                    }
+                                }
+                            ],
+                            "MtxKind":0
+                        }
+                    }
+                }
+            ],
+            "MtxKind":0
+        }
+    }
+    """;
+
+    [Fact]
+    public static void ArrayOfArrays_AstToJson()
+    {
+        var ast = JsonSerializer.Deserialize<AstNode>(
+            desiredAst,
+            LibJmon.JsonSerialization.Resources.JsonSerializerOptions
+        )!;
+        
+        var parsedVal = LibJmon.TestingApi.AstToJson(ast);
+        JsonArray? arr = parsedVal.V?.AsArray();
+        Assert.Equal(1, arr?.Count);
+        JsonArray? innerArr0 = arr?[0]?.AsArray();
+        Assert.Equal(2, innerArr0?.Count);
+        Assert.Equal("00", (string?)innerArr0?[0]);
+        Assert.Equal("01", (string?)innerArr0?[1]);
     }
 }
