@@ -87,7 +87,7 @@ public static class Assignments
             if (path.IsAppend)
             {
                 JsonVal.Any srcVal = AstToJson(astNode);
-                if (srcVal.V is not JsonObject or JsonArray) { throw new Exception(); } // TODO
+                if (srcVal.V is not (JsonObject or JsonArray)) { throw new Exception(); }  // TODO
                 var dstNode = AddOrReturnExisting(curNode, cvtPath.Items[^1], srcVal.V);
 
                 if (!object.ReferenceEquals(dstNode, srcVal.V))

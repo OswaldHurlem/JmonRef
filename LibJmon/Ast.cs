@@ -20,14 +20,20 @@ public static class Ast
                 ? pathPrefix.Append(pathCell.V)
                 : null;
         
-        var seq = cells
+        var cellsWithPaths = cells
             .Select((cell, idx) => (pathSeq: MakePathBuilder(cell), idx))
             .Where(t => t.pathSeq is not null)
             .ToList();
-        
-        var endsSeq = seq.Select(t => t.idx).Skip(1).Concat(new[] { cells.Count });
 
-        return seq.Zip(endsSeq, (t, end) => (t.pathSeq!, t.idx, end));
+        if (!cellsWithPaths.Any())
+        {
+            var singleRange = (pathPrefix, 0, cells.Count);
+            return new[] { singleRange };
+        }
+        
+        var endsSeq = cellsWithPaths.Select(t => t.idx).Skip(1).Concat(new[] { cells.Count });
+
+        return cellsWithPaths.Zip(endsSeq, (t, end) => (t.pathSeq!, t.idx, end));
     }
 
     // Converts to AstNode.Mtx.Item
@@ -113,6 +119,7 @@ public static class Ast
 
         var pathColSearchRange = subSheet.SliceCols(0..pathRowBeg.Col).Tpose();
         var pathColBegOrNull = pathColSearchRange.CoordAndCellSeq().Find(cell => cell is LexedCell.Path);
+        // TODO improve this error. Situation is that no pathColBeg can be found given a pathRowBeg
         if (pathColBegOrNull is not Coord pathColBeg) { return StrayCellAtInnerCoord(subSheet, pathRowBeg); }
         pathColBeg = subSheet.ToInner(pathColSearchRange.ToOuter(pathColBeg));
 
@@ -138,14 +145,16 @@ public static class Ast
 
         foreach (var (pathBuilder, node) in mtxProtoItems)
         {
-            if (pathBuilder[..^1].Any(path => path.IsAppend))
+            var nonBlankPaths = pathBuilder.Where(p => p.Items.Any()).ToList();
+            
+            if (nonBlankPaths.SkipLast(1).Any(path => path.IsAppend))
             {
                 return new AstNode.Error("TODO"); // TODO
             }
 
             LexedPath combinedPath = new(
-                pathBuilder.SelectMany(path => path.Items).ToImmutableArray(),
-                pathBuilder.Last().IsAppend
+                nonBlankPaths.SelectMany(path => path.Items).ToImmutableArray(),
+                nonBlankPaths.Last().IsAppend
             );
 
             if (!combinedPath.Items.Any())
