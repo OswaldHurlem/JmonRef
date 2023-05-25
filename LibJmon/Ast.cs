@@ -132,14 +132,6 @@ public static class Ast
         pathRows = pathRows.SliceRows(pathRowBeg.Row..);
         pathCols = pathCols.SliceCols(pathColBeg.Col..);
 
-        const AstNode.Error? kNotErr = null;
-
-        AstNode.Error ErrorForPath(LexedPath path)
-        {
-            var pathJson = JsonSerializer.Serialize(path, JsonSerialization.Resources.JsonSerializerOptions);
-            return new AstNode.Error($"Path {pathJson} not valid for matrix of kind {mtxKind}");
-        }
-
         var mtxProtoItems = ParsePathCols(Enumerable.Empty<LexedPath>(), pathCols, pathRows, interior);
         List<AstNode.Matrix.Item> mtxItems = new();
 
