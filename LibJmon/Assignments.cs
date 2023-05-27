@@ -10,9 +10,10 @@ public readonly record struct Assignment(ConvertedPath Path, JsonVal.Any Value);
 
 public static class Assignments
 {
-    private static ConvertedPath ConvertPath(LexedPath lexedPath, IDictionary<ConvertedPath, int> idxForPartialPath)
+    private static ConvertedPath
+        ConvertPath(ConvertedPath prefixPath, LexedPath lexedPath, IDictionary<ConvertedPath, int> idxForPartialPath)
     {
-        var cvtPathItems = new List<PathItem>();
+        var cvtPathItems = prefixPath.Items.ToList();
         
         PathItem.Idx ConvertProtoIdxElmt(PathItem.Idx arrElmt)
         {
@@ -24,7 +25,7 @@ public static class Assignments
             return idx;
         }
 
-        var pathSegments = lexedPath.Items.Segment(elmt => elmt is PathItem.Idx).ToArray();
+        var pathSegments = lexedPath.Items.Segment(elmt => elmt is PathItem.Idx);
 
         foreach (IReadOnlyList<PathItem> pathSegment in pathSegments)
         {
@@ -36,19 +37,43 @@ public static class Assignments
         return new ConvertedPath(cvtPathItems.ToImmutableArray(), lexedPath.IsAppend);
     }
 
-    public static JsonVal.Any MtxToJson(AstNode.Matrix matrix)
+    public static IEnumerable<Assignment> ComputeAssignmentsForMtx(AstNode.Branch mtx)
     {
-        // TODO replace placeholders / assignmentsToDo with something a little more elegant
-        
-        // Throw if empty??
-        
         Dictionary<ConvertedPath, int> idxForPartialPath = new();
+        
+        IEnumerable<Assignment> Inner(ConvertedPath parentPath, AstNode node) =>
+            node.AsOneOf().Match(
+                leaf => new[] { new Assignment(parentPath, leaf) },
+                branch => branch.Items.SelectMany(
+                    item => item.Node switch
+                    {
+                        AstNode.Branch { Kind: BranchKind.ArrMtx } mtx1 =>
+                            new[] { new Assignment(ConvertPath(parentPath, item.Path, idxForPartialPath), MtxToJson(mtx1)) },
+                        AstNode.Branch { Kind: BranchKind.ObjMtx } mtx1 =>
+                            new[] { new Assignment(ConvertPath(parentPath, item.Path, idxForPartialPath), MtxToJson(mtx1)) },
+                        _ => Inner(ConvertPath(parentPath, item.Path, idxForPartialPath), item.Node)
+                    }
+                ),
+                error => throw new Exception("Asdf") // TODO
+            );
+
+        return Inner(ConvertedPath.EmptyNonAppend, mtx);
+    }
+
+    public static JsonVal.Any MtxToJson(AstNode.Branch mtx)
+    {
+        // Throw if empty??
         
         HashSet<JsonNode> sealedNodes = new();
         List<(JsonArray, int)> nullsInArrays = new();
         List<(JsonObject, string)> nullsInObjects = new();
-        JsonNode root = matrix.MtxKind == MtxKind.Arr ? new JsonArray() : new JsonObject();
-        
+        JsonNode root = mtx.Kind switch
+        {
+            BranchKind.ObjMtx => new JsonObject(),
+            BranchKind.ArrMtx => new JsonArray(),
+            _ => throw new Exception("Unexpected branch kind")
+        };
+
         JsonNode MakeNullPlaceholder() => new JsonObject { { "\uE0E1", null } };
         
         JsonNode? AddOrReturnExisting(JsonNode parent, PathItem pathItem, JsonNode? child)
@@ -71,9 +96,10 @@ public static class Assignments
             );
         }
 
-        foreach (var (path, astNode) in matrix.Items)
+        var assignments = ComputeAssignmentsForMtx(mtx);
+
+        foreach (var (cvtPath, srcVal) in assignments)
         {
-            var cvtPath = ConvertPath(path, idxForPartialPath);
             var curNode = root;
 
             foreach (var (elmtN, elmtNPlus1) in cvtPath.Items.Zip(cvtPath.Items[1..]))
@@ -83,9 +109,8 @@ public static class Assignments
                 if (sealedNodes.Contains(curNode)) { throw new Exception("Implicit modification of sealed node"); } // TODO
             }
 
-            if (path.IsAppend)
+            if (cvtPath.IsAppend)
             {
-                JsonVal.Any srcVal = AstToJson(astNode);
                 if (srcVal.V is not (JsonObject or JsonArray)) { throw new Exception(); }  // TODO
                 var dstNode = AddOrReturnExisting(curNode, cvtPath.Items[^1], srcVal.V);
 
@@ -123,9 +148,7 @@ public static class Assignments
             }
             else
             {
-                JsonVal.Any jVal = AstToJson(astNode);
-
-                if (jVal.V is not JsonNode jNode)
+                if (srcVal.V is not JsonNode jNode)
                 {
                     jNode = MakeNullPlaceholder();
                     cvtPath.Items[^1].AsOneOf().Switch(

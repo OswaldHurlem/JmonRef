@@ -8,6 +8,8 @@ using LibJmon.Types;
 
 namespace TestLibJmon;
 
+// TODO serialize enums to strings
+
 public static class Serialization
 {
     private static (string jsonCode, JsonVal.Str jsonStr) MakeJsonStr() => ("\"a\"", "a");
@@ -167,11 +169,11 @@ public static class Serialization
     {
         var (expLeafSzd, leaf) = MakeAstValCell();
         var (expPathSzd, path) = MakeLexedPath();
-        AstNode.Matrix.Item item = new(path, leaf);
-        AstNode matrix = new AstNode.Matrix(ImmutableArray.Create(item), MtxKind.Obj);
+        BranchItem branchItem = new(path, leaf);
+        AstNode matrix = new AstNode.Branch(ImmutableArray.Create(branchItem), BranchKind.ObjMtx);
         var serialized = JsonSerializer.Serialize(matrix, Resources.JsonSerializerOptions);
         var expInner = $@"[{{""Path"":{expPathSzd},""Node"":{expLeafSzd}}}]";
-        var expJson = @$"{{""Type"":""Matrix"",""Val"":{{""Items"":{expInner},""MtxKind"":1}}}}";
+        var expJson = @$"{{""Type"":""Branch"",""Val"":{{""Items"":{expInner},""Kind"":1}}}}";
         Assert.Equal(expJson, serialized);
         var deserialized = JsonSerializer.Deserialize<AstNode>(serialized, Resources.JsonSerializerOptions);
         Assert.Equal(matrix, deserialized);

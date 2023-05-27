@@ -50,7 +50,10 @@ public sealed record LexedPath(ImmutableArray<PathItem> Items, bool IsAppend) : 
     public bool IdxsAreValid() => Items.OfType<PathItem.Idx>().All(i => i.V is 0 or 1);
 }
 
-public sealed record ConvertedPath(ImmutableArray<PathItem> Items, bool IsAppend) : PathBase(Items, IsAppend);
+public sealed record ConvertedPath(ImmutableArray<PathItem> Items, bool IsAppend) : PathBase(Items, IsAppend)
+{
+    public static ConvertedPath EmptyNonAppend => new(ImmutableArray<PathItem>.Empty, false);
+}
 
 public abstract record PathItem : IUnion<PathItem, PathItem.Key, PathItem.Idx>
 {
@@ -101,7 +104,7 @@ public abstract record LexedCell
     };
 }
 
-public abstract record AstNode : IUnion<AstNode, AstNode.ValCell, AstNode.Matrix, AstNode.Error>
+public abstract record AstNode : IUnion<AstNode, AstNode.ValCell, AstNode.Branch, AstNode.Error>
 {
     public sealed record ValCell(JsonVal.Any V) : AstNode, IImplicitConversion<ValCell, JsonVal.Any>
     {
@@ -109,15 +112,13 @@ public abstract record AstNode : IUnion<AstNode, AstNode.ValCell, AstNode.Matrix
         public static implicit operator JsonVal.Any(ValCell l) => l.V;
     }
 
-    public sealed record Matrix(ImmutableArray<Matrix.Item> Items, MtxKind MtxKind) : AstNode
+    public sealed record Branch(ImmutableArray<BranchItem> Items, BranchKind Kind) : AstNode
     {
-        public readonly record struct Item(LexedPath Path, AstNode Node);
-        
-        public bool Equals(Matrix? other) =>
-            (other is not null) && (MtxKind == other.MtxKind) && Items.SequenceEqual(other.Items);
+        public bool Equals(Branch? other) =>
+            (other is not null) && (Kind == other.Kind) && Items.SequenceEqual(other.Items);
         public override int GetHashCode() => Items.Aggregate(0, HashCode.Combine);
         
-        public static Matrix Empty(MtxKind kind) => new(ImmutableArray<Matrix.Item>.Empty, kind);
+        public static Branch Empty(BranchKind kind) => new(ImmutableArray<BranchItem>.Empty, kind);
     }
 
     public sealed record Error(string V) : AstNode, IImplicitConversion<Error, string>
@@ -125,4 +126,18 @@ public abstract record AstNode : IUnion<AstNode, AstNode.ValCell, AstNode.Matrix
         public static implicit operator Error(string v) => new(v);
         public static implicit operator string(Error e) => e.V;
     }
+}
+
+public enum BranchKind { ArrMtx = 0, ObjMtx = 1, Range = 2 };
+
+public readonly record struct BranchItem(LexedPath Path, AstNode Node);
+
+public static class MtxKindConversion
+{
+    public static BranchKind ToBranchKind(this MtxKind kind) => kind switch
+    {
+        MtxKind.Arr => BranchKind.ArrMtx,
+        MtxKind.Obj => BranchKind.ObjMtx,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+    };
 }

@@ -30,7 +30,7 @@ public static class KnownBugs
 
     private const string desiredAst = """
     {
-        "Type":"Matrix",
+        "Type":"Branch",
         "Val":{
             "Items":[
                 {
@@ -39,7 +39,7 @@ public static class KnownBugs
                         "IsAppend":false
                     },
                     "Node":{
-                        "Type":"Matrix",
+                        "Type":"Branch",
                         "Val":{
                             "Items":[
                                 {
@@ -63,12 +63,12 @@ public static class KnownBugs
                                     }
                                 }
                             ],
-                            "MtxKind":0
+                            "Kind":2
                         }
                     }
                 }
             ],
-            "MtxKind":0
+            "Kind":0
         }
     }
     """;

@@ -226,4 +226,4 @@ public abstract class UnionConverter<TBase, TDer0, TDer1, TDer2, TDer3, TDer4> :
 public sealed class LexedCellConverter
     : UnionConverter<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead, LexedCell.Error> { }
 public sealed class JsonValConverter : UnionConverter<JsonVal, JsonVal.Any, JsonVal.Str> { }
-public sealed class AstNodeConverter : UnionConverter<AstNode, AstNode.ValCell, AstNode.Matrix, AstNode.Error> { }
+public sealed class AstNodeConverter : UnionConverter<AstNode, AstNode.ValCell, AstNode.Branch, AstNode.Error> { }
