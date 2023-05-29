@@ -110,7 +110,7 @@ public readonly record struct SubSheet<T>(ReadOnlyMemory2D<T> NonTposedMem, Coor
 
     public Rect Rect => (Coord.Of00, End);
     
-    private Rect NonTposedRect => (Coord.Of00, NonTposedEnd);
+    public Rect OuterRect => (OuterBeg, OuterBeg + NonTposedEnd);
 
     private bool PrintMembers(StringBuilder builder)
     {
@@ -186,6 +186,9 @@ public static class SubSheetExt
     public static Coord ToOuter<T>(this SubSheet<T> sheet, Coord localCoord) =>
         sheet.OuterBeg + (sheet.IsTposed ? localCoord.SwizCR() : localCoord);
 
-    public static Coord ToInner<T>(this SubSheet<T> sheet, Coord outerCoord) =>
-        (sheet.IsTposed ? outerCoord.SwizRC() : outerCoord) - sheet.OuterBeg;
+    public static Coord ToInner<T>(this SubSheet<T> sheet, Coord outerCoord)
+    {
+        var c = outerCoord - sheet.OuterBeg;
+        return sheet.IsTposed ? c.SwizCR() : c;
+    }
 }
