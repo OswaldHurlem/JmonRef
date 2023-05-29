@@ -48,6 +48,7 @@ public abstract record PathBase(ImmutableArray<PathItem> Items, bool IsAppend)
 public sealed record LexedPath(ImmutableArray<PathItem> Items, bool IsAppend) : PathBase(Items, IsAppend)
 {
     public bool IdxsAreValid() => Items.OfType<PathItem.Idx>().All(i => i.V is 0 or 1);
+    public static LexedPath EmptyNonAppend => new(ImmutableArray<PathItem>.Empty, false);
 }
 
 public sealed record ConvertedPath(ImmutableArray<PathItem> Items, bool IsAppend) : PathBase(Items, IsAppend)

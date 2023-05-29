@@ -18,6 +18,11 @@ public static class Ast
             .Select((cell, idx) => (path: (cell as LexedCell.Path)?.V, idx))
             .Where(t => t.path is not null)
             .ToList();
+
+        // Special case for when row is blank
+        // TODO consider changing this so that between 0 and first non-blank is a range with implicit path of `.`
+        // (Will have same effect for blank row)
+        if (seq.Count == 0) { return new[] { (LexedPath.EmptyNonAppend, 0, cellSeq.Count) }; }
         
         var endsSeq = seq.Select(t => t.idx).Skip(1).Concat(new[] { cellSeq.Count });
         return seq.Zip(endsSeq, (t, end) => (t.path!, t.idx, end));
