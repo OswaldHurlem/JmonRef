@@ -69,6 +69,9 @@ public abstract record PathItem : IUnion<PathItem, PathItem.Key, PathItem.Idx>
         public static implicit operator Idx(int i) => new(i);
         public static implicit operator int(Idx i) => i.V;
     }
+
+    public static PathItem.Idx ArrayPlus => 1;
+    public static PathItem.Idx ArrayStop => 0;
 }
 
 public enum MtxKind { Arr = 0, Obj = 1 };

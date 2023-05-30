@@ -46,6 +46,89 @@ public static class Lexing
         catch (JsonException e) { return e.Message; }
     }
 
+    public static (int idx, int len) Match(this Regex regex, ReadOnlySpan<char> text)
+    {
+        var matches = regex.EnumerateMatches(text);
+        return matches.MoveNext()
+            ? (matches.Current.Index, matches.Current.Length)
+            : (-1, 0);
+    }
+    
+    public static LexedPath LexPath(ReadOnlySpan<char> pathExpr)
+    {
+        var pathItems = new List<PathItem>();
+        bool isAppend = false;
+
+        var dqRegex = new Regex(@"^""(?:[^""\\]|\\.)*""");
+        var sqRegex = new Regex(@"^'(?:[^'\\]|\\.)*'");
+        var wordRegex = new Regex(@"^\w+");
+        var kDot = ".".AsSpan();
+
+        var remPathExpr = pathExpr;
+
+        while (!remPathExpr.IsEmpty)
+        {
+            if (!remPathExpr.StartsWith(kDot)) { throw new Exception("Expected '.'"); }
+            
+            remPathExpr = remPathExpr[1..].TrimStart();
+            if (remPathExpr.IsEmpty) { break; }
+
+            if (remPathExpr.Equals("+*", StringComparison.Ordinal))
+            {
+                isAppend = true;
+                break;
+            }
+            
+            switch (remPathExpr[0])
+            {
+                case '+':
+                {
+                    pathItems.Add(PathItem.ArrayPlus);
+                    remPathExpr = remPathExpr[1..].TrimStart();
+                    break;
+                }
+                case '$':
+                {
+                    pathItems.Add(PathItem.ArrayStop);
+                    remPathExpr = remPathExpr[1..].TrimStart();
+                    break;
+                }
+                case '\"':
+                {
+                    var (idx, len) = dqRegex.Match(remPathExpr);
+                    if (idx == -1) { throw new Exception("Unmatched quote"); }
+                    var dqStr = remPathExpr[idx..(idx+len)];
+                    var str = JsonSerializer.Deserialize<string>(dqStr)!;
+                    pathItems.Add(new PathItem.Key(str));
+                    remPathExpr = remPathExpr[(idx+len)..].TrimStart();
+                    break;
+                }
+                case '\'':
+                {
+                    var (idx, len) = sqRegex.Match(remPathExpr);
+                    if (idx == -1) { throw new Exception("Unmatched quote"); }
+                    var sqStr = remPathExpr[idx..(idx+len)];
+                    var dqStr = ConvertSqToDq(sqStr.ToString());
+                    var str = JsonSerializer.Deserialize<string>(dqStr)!;
+                    pathItems.Add(new PathItem.Key(str));
+                    remPathExpr = remPathExpr[(idx+len)..].TrimStart();
+                    break;
+                }
+                default:
+                {
+                    var (idx, len) = wordRegex.Match(remPathExpr);
+                    if (idx == -1) { throw new Exception(@"Expected unquoted path matching regex ^\w+"); }
+                    var word = remPathExpr[idx..(idx+len)];
+                    pathItems.Add(new PathItem.Key(word.ToString()));
+                    remPathExpr = remPathExpr[(idx+len)..].TrimStart();
+                    break;
+                }
+            }
+        }
+        
+        return new LexedPath(pathItems.ToImmutableArray(), isAppend);
+    }
+
     public static LexedCell Lex(string cellText)
     {
         var jsonOpts = JsonSerialization.Resources.JsonSerializerOptions;
@@ -70,63 +153,7 @@ public static class Lexing
         
         if (trimmedText.StartsWith('.'))
         {
-            if (trimmedText == ".")
-            {
-                LexedPath emptyPath = new(ImmutableArray<PathItem>.Empty, false);
-                return new LexedCell.Path(emptyPath);
-            }
-            
-            var textAfterDot = trimmedText[1..];
-            var pathAsJsonParse = TryParseJsonExpr(textAfterDot);
-
-            if (pathAsJsonParse.TryPickT1(out string errMsg, out _)) { return new LexedCell.Error(errMsg); }  // TODO
-            if (pathAsJsonParse.TryPickT0(out JsonVal.Any pathAsJson, out _))
-            {
-                LexedCell CheckPathAndMakeCell(LexedPath p) =>
-                    p.IdxsAreValid()
-                        ? new LexedCell.Path(p)
-                        : new LexedCell.Error("Path expressed as JSON must only contain index entries equal to 0 or 1");
-                
-                return pathAsJson.TryDeserialize<LexedPath>()
-                    .MapT0(CheckPathAndMakeCell)
-                    .MapT1(_ => pathAsJson.TryDeserialize<PathItem>()
-                        .MapT0(item => new LexedPath(ImmutableArray.Create(item), false))
-                        .MapT0(CheckPathAndMakeCell)
-                        .Match(c => c, _ => new LexedCell.Error("JSON expression is not a LexedPath or PathItem"))
-                    )
-                    .Match(c => c, c => c);
-            }
-
-            var segments = textAfterDot.Split('.');
-            bool isAppend = segments[^1] == "+*";
-            if (isAppend) { segments = segments[..^1]; }
-            
-            var pathElmts = new PathItem[segments.Length];
-
-            foreach (var (segment, idx) in segments.Select((s, i) => (s, i)))
-            {
-                switch (segment)
-                {
-                    case "+":
-                        pathElmts[idx] = new PathItem.Idx(1);
-                        continue;
-                    case "$":
-                        pathElmts[idx] = new PathItem.Idx(0);
-                        continue;
-                    case "+*":
-                        return new LexedCell.Error("Append operator '+*' must be the last element of the path");
-                    default:
-                        if (!Regex.IsMatch(segment, @"^\w+$"))
-                        {
-                            return new LexedCell.Error(@"Path elements must match regex ^\w+$");
-                        }
-                        pathElmts[idx] = new PathItem.Key(segment);
-                        continue;
-                }
-            }
-            
-            LexedPath path = new(pathElmts.ToImmutableArray(), isAppend);
-            return new LexedCell.Path(path);
+            return new LexedCell.Path(LexPath(trimmedText.AsSpan()));
         }
 
         // String Cell
