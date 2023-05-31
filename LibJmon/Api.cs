@@ -1,15 +1,11 @@
-﻿using LibJmon.Types;
+﻿using System.Text.Json;
+using LibJmon.Types;
+using LibJmon.Impl;
 
 namespace LibJmon;
 
-public static class TestingApi
+public static class ApiV0
 {
-    public static LexedCell[,] LexCells(string[,] cells) =>
-        Impl.TestingApi.LexCells(cells);
-    
-    public static AstNode ParseLexedCells(LexedCell[,] lexedCells) =>
-        Impl.TestingApi.ParseLexedCells(lexedCells);
-    
-    public static JsonVal.Any AstToJson(AstNode astNode) =>
-        Impl.TestingApi.AstToJson(astNode);
+    public static string ParseJmon(string[,] cells, JsonSerializerOptions jsonOptions)
+        => ApiV0Impl.ParseJmon(cells, jsonOptions);
 }

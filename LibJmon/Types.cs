@@ -9,7 +9,7 @@ namespace LibJmon.Types;
 
 using ArrIdx = Int32;
 
-public abstract record JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str> // IToJsonDocument
+public abstract record JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str>
 {
     public sealed record Any(JsonNode? V) : JsonVal, IImplicitConversion<Any, JsonNode?>
     {
@@ -18,6 +18,8 @@ public abstract record JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str> // IT
 
         public bool Equals(Any? other) => V?.ToJsonString() == other?.V?.ToJsonString();
         public override int GetHashCode() => V?.ToJsonString()?.GetHashCode() ?? 0;
+        
+        public string ToUtf16String() => V?.ToJsonString() ?? "null";
     }
     
     public sealed record Str(string V) : JsonVal, IImplicitConversion<Str, string>
@@ -25,16 +27,7 @@ public abstract record JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str> // IT
         public static implicit operator Str(string v) => new(v);
         public static implicit operator string(Str v) => v.V;
 
-        public string ToUtf16String() => V; // Encoding.UTF8.GetString(V.AsSpan());
-    }
-}
-
-public static class JsonAnyExt
-{
-    public static OneOf<T, None> TryDeserialize<T>(this JsonVal.Any any)
-    {
-        try { return any.V.Deserialize<T>(JsonSerialization.Resources.JsonSerializerOptions).ToOneOf(); }
-        catch (JsonException e) { return new None(); }
+        public string ToUtf16String() => V;
     }
 }
 
@@ -70,14 +63,14 @@ public abstract record PathItem : IUnion<PathItem, PathItem.Key, PathItem.Idx>
         public static implicit operator int(Idx i) => i.V;
     }
 
-    public static PathItem.Idx ArrayPlus => 1;
-    public static PathItem.Idx ArrayStop => 0;
+    public static Idx ArrayPlus => 1;
+    public static Idx ArrayStop => 0;
 }
 
 public enum MtxKind { Arr = 0, Obj = 1 };
 
 public abstract record LexedCell
-    : IUnion<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead, LexedCell.Error>
+    : IUnion<LexedCell, LexedCell.Blank, LexedCell.Path, LexedCell.JVal, LexedCell.MtxHead>
 {
     public sealed record Blank : LexedCell { }
 
@@ -94,12 +87,6 @@ public abstract record LexedCell
     }
 
     public sealed record MtxHead(MtxKind Kind, bool IsTp) : LexedCell;
-
-    public sealed record Error(string V) : LexedCell, IImplicitConversion<Error, string>
-    {
-        public static implicit operator string(Error e) => e.V;
-        public static implicit operator Error(string e) => new(e);
-    }
 
     public bool IsHeader() => this switch
     {

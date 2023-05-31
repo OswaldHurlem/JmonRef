@@ -3,7 +3,7 @@ using CommunityToolkit.HighPerformance;
 
 namespace LibJmon.Sheets;
 
-public readonly record struct Coord(int Row, int Col)
+internal readonly record struct Coord(int Row, int Col)
 {
     public static Coord operator +(Coord a, Coord b) => new(a.Row + b.Row, a.Col + b.Col);
     public static Coord operator -(Coord a, Coord b) => new(a.Row - b.Row, a.Col - b.Col);
@@ -21,7 +21,7 @@ public readonly record struct Coord(int Row, int Col)
     public static Coord Of11 => (1, 1);
 }
 
-public static class CoordExt
+internal static class CoordExt
 {
     public static Coord Swiz00(this Coord c) => Coord.Of00;
     public static Coord Swiz0C(this Coord c) => (0, c.Col);
@@ -36,7 +36,7 @@ public static class CoordExt
     public static (int row, int col) ToTuple(this Coord c) => (c.Row, c.Col);
 }
 
-public readonly record struct Rect(Coord Beg, Coord End)
+internal readonly record struct Rect(Coord Beg, Coord End)
 {
     public static implicit operator Rect((Coord beg, Coord end) t) => new(t.beg, t.end);
     public static implicit operator (Coord beg, Coord end)(Rect r) => (r.Beg, r.End);
@@ -49,7 +49,7 @@ public readonly record struct Rect(Coord Beg, Coord End)
     }
 }
 
-public static class RectExt
+internal static class RectExt
 {
     public static Rect Tpose(this Rect r) => (r.Beg.SwizCR(), r.End.SwizCR());
     
@@ -87,13 +87,13 @@ public static class RectExt
     public static (Range rows, Range cols) ToRanges(this Rect r) => (r.Beg.Row..r.End.Row, r.Beg.Col..r.End.Col);
 }
 
-public static class SubSheet
+internal static class SubSheet
 {
     public static SubSheet<T> Create<T>(ReadOnlyMemory2D<T> mem) => new(mem, Coord.Of00, false);
     public static SubSheet<T> Create<T>(T[,] array) => new(array, Coord.Of00, false);
 }
 
-public readonly record struct SubSheet<T>(ReadOnlyMemory2D<T> NonTposedMem, Coord OuterBeg, bool IsTposed)
+internal readonly record struct SubSheet<T>(ReadOnlyMemory2D<T> NonTposedMem, Coord OuterBeg, bool IsTposed)
 {
     // TODO move to Ext?
     private ReadOnlySpan2D<T> NonTposedSpan => NonTposedMem.Span;
@@ -123,7 +123,7 @@ public readonly record struct SubSheet<T>(ReadOnlyMemory2D<T> NonTposedMem, Coor
     }
 }
 
-public static class SubSheetExt
+internal static class SubSheetExt
 {
     public static IEnumerable<(Coord coord, T cell)> CoordAndCellSeq<T>(this SubSheet<T> sheet) =>
         sheet.Rect.CoordSeq().Select(c => (c, sheet[c]));
@@ -146,6 +146,7 @@ public static class SubSheetExt
         var (rows, cols) = nonTpInnerRect.ToRanges();
 
         // https://github.com/CommunityToolkit/dotnet/issues/673
+        // TODO: Revise if updating CommunityToolkit.HighPerformance
         var buggyRows = sheet.NonTposedMem.Height..sheet.NonTposedMem.Height;
         var buggyCols = sheet.NonTposedMem.Width..sheet.NonTposedMem.Width;
         if (rows.Equals(buggyRows)) { rows = 0..0; }
@@ -181,7 +182,7 @@ public static class SubSheetExt
         sheet.Slice(rowRange, Range.All);
     
     public static SubSheet<T> Tpose<T>(this SubSheet<T> sheet) =>
-        new(sheet.NonTposedMem, sheet.OuterBeg, !sheet.IsTposed);
+        sheet with { IsTposed = !sheet.IsTposed };
 
     public static Coord ToOuter<T>(this SubSheet<T> sheet, Coord localCoord) =>
         sheet.OuterBeg + (sheet.IsTposed ? localCoord.SwizCR() : localCoord);

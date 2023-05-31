@@ -1,6 +1,6 @@
 ﻿namespace LibJmon.Linq;
 
-public static class SeqExt
+internal static class SeqExt
 {
     public static TCoord? Find<TCoord,TObj>(this IEnumerable<(TCoord coord, TObj val)> seq, Func<TObj, bool> pred)
         where TCoord : struct =>
@@ -29,7 +29,7 @@ public static class SeqExt
  *   - Changed return type to IEnumerable<IReadonlyList<T>>
  *   - Moved to namespace JmonLib.Impl
  */
-public static class MoreLinq
+internal static class MoreLinq
 {
     /// <summary>
     /// Divides a sequence into multiple sequences by using a segment detector based on the original sequence

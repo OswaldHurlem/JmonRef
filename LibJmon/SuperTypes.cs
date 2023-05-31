@@ -21,6 +21,13 @@ public interface IUnion<TBase, TDer0, TDer1, TDer2>
     where TDer1 : TBase
     where TDer2 : TBase { }
 
+public interface IUnion<TBase, TDer0, TDer1, TDer2, TDer3>
+    where TBase : IUnion<TBase, TDer0, TDer1, TDer2, TDer3>
+    where TDer0 : TBase
+    where TDer1 : TBase
+    where TDer2 : TBase
+    where TDer3 : TBase { }
+
 public interface IUnion<TBase, TDer0, TDer1, TDer2, TDer3, TDer4>
     where TBase : IUnion<TBase, TDer0, TDer1, TDer2, TDer3, TDer4>
     where TDer0 : TBase
@@ -29,12 +36,13 @@ public interface IUnion<TBase, TDer0, TDer1, TDer2, TDer3, TDer4>
     where TDer3 : TBase
     where TDer4 : TBase { }
 
-public static class UnionUtil
+internal static class UnionUtil
 {
     public static OneOf<TDer0, TDer1>
         AsOneOf<TObj, TDer0, TDer1>(this IUnion<TObj, TDer0, TDer1> obj)
         where TObj : IUnion<TObj, TDer0, TDer1> 
-        where TDer0 : TObj where TDer1 : TObj =>
+        where TDer0 : TObj
+        where TDer1 : TObj =>
         obj switch
         {
             TDer0 t0 => t0,
@@ -53,6 +61,22 @@ public static class UnionUtil
             TDer0 t0 => t0,
             TDer1 t1 => t1,
             TDer2 t2 => t2,
+            _ => throw new Exception(),
+        };
+    
+    public static OneOf<TDer0, TDer1, TDer2, TDer3>
+        AsOneOf<TObj, TDer0, TDer1, TDer2, TDer3>(this IUnion<TObj, TDer0, TDer1, TDer2, TDer3> obj)
+        where TObj : IUnion<TObj, TDer0, TDer1, TDer2, TDer3>
+        where TDer0 : TObj
+        where TDer1 : TObj
+        where TDer2 : TObj
+        where TDer3 : TObj =>
+        obj switch
+        {
+            TDer0 t0 => t0,
+            TDer1 t1 => t1,
+            TDer2 t2 => t2,
+            TDer3 t3 => t3,
             _ => throw new Exception(),
         };
 
@@ -76,7 +100,7 @@ public static class UnionUtil
 }
 
 // TODO replace some nulls w/ OneOf<T,None>
-public static class NullableExt
+internal static class NullableExt
 {
     public static OneOf<T, None> ToOneOf<T>(this T? v)
     {
