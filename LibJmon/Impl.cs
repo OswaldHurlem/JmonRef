@@ -267,7 +267,7 @@ internal static class Ast
         {
             foreach (var (path, begCol, endCol) in seq)
             {
-                AstNode? valOrNull = ParseJmon(interior.SliceCols(begCol..endCol));
+                AstNode? valOrNull = SubSheetToAst(interior.SliceCols(begCol..endCol));
                 if (valOrNull is {} val) { yield return new(path, val); }
             }
             yield break;
@@ -281,13 +281,13 @@ internal static class Ast
         }
     }
 
-    // private record StrayCell(Coord Coord, string Type);
+    private record StrayCell(Coord Coord, string Type);
 
-    // private static AstNode.Error StrayCellAtInnerCoord(SubSheet<LexedCell> sheet, Coord innerCoord)
-    // {
-    //     var obj = new StrayCell(sheet.ToOuter(innerCoord), sheet[innerCoord].GetType().Name);
-    //     return new AstNode.Error(obj.ToString());
-    // }
+    private static AstNode.Error StrayCellAtInnerCoord(SubSheet<LexedCell> sheet, Coord innerCoord)
+    {
+        var obj = new StrayCell(sheet.ToOuter(innerCoord), sheet[innerCoord].GetType().Name);
+        return new AstNode.Error(obj.ToString());
+    }
 
     private static AstNode ParseMtx(SubSheet<LexedCell> subSheet)
     {
@@ -333,7 +333,7 @@ internal static class Ast
         return new AstNode.Branch(mtxItems.ToImmutableArray(), mtxKind.ToBranchKind());
     }
 
-    private static AstNode? ParseJmon(SubSheet<LexedCell> subSheet)
+    private static AstNode? SubSheetToAst(SubSheet<LexedCell> subSheet)
     {
         var firstNonBlankOrNull = subSheet.CoordAndCellSeq().Find(cell => cell is not LexedCell.Blank);
         if (firstNonBlankOrNull is not Coord firstNonBlank) { return null; }
@@ -365,7 +365,7 @@ internal static class Ast
 
     public static AstNode LexedCellsToAst(LexedCell[,] lexedCells)
     {
-        var parseResult = Ast.ParseJmon(SubSheet.Create(lexedCells));
+        var parseResult = Ast.SubSheetToAst(SubSheet.Create(lexedCells));
         if (parseResult is { } astNode) { return astNode; }
 
         throw new Exception("TODO"); // TODO
