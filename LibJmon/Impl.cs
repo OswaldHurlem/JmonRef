@@ -10,6 +10,8 @@ using LibJmon.Linq;
 using LibJmon.Sheets;
 using LibJmon.SuperTypes;
 
+using TempError = OneOf.Types.Error<string>;
+
 namespace LibJmon.Impl;
 
 internal static class ApiV0Impl
@@ -18,8 +20,9 @@ internal static class ApiV0Impl
     {
         LexedCell[,] lexedCells = Lexing.LexCells(cells, jsonOptions);
         AstNode ast = Ast.LexedCellsToAst(lexedCells);
-        JsonVal.Any jsonVal = Construction.AstToJson(ast);
-        return jsonVal.ToUtf16String();
+        IReadOnlyList<JsonTreeOp> treeOps = JsonTreeOps.AstToJsonTreeOps(ast);
+        JsonVal.Any jsonVal = Construction.ConstructFromTreeOps(treeOps);
+        return jsonVal.ToUtf16String(jsonOptions);
     }
 }
 
@@ -372,18 +375,16 @@ internal static class Ast
     }
 }
 
-internal static class Construction
+internal static class JsonTreeOps
 {
-    private readonly record struct Assignment(ConvertedPath Path, JsonVal.Any Value);
-    
-    private static ConvertedPath
-        ConvertPath(ConvertedPath prefixPath, LexedPath lexedPath, IDictionary<ConvertedPath, int> idxForPartialPath)
+    private static AssignPath
+        ConvertPath(AssignPath prefixPath, LexedPath lexedPath, IDictionary<AssignPath, int> idxForPartialPath)
     {
         var cvtPathItems = prefixPath.Items.ToList();
         
         PathItem.Idx ConvertProtoIdxElmt(PathItem.Idx arrElmt)
         {
-            ConvertedPath partialPath = new(cvtPathItems.ToImmutableArray(), false);
+            AssignPath partialPath = new(cvtPathItems.ToImmutableArray());
             if (!idxForPartialPath.TryGetValue(partialPath, out var idx)) { idx = -1; }
 
             idx += arrElmt.V;
@@ -400,145 +401,277 @@ internal static class Construction
             cvtPathItems.AddRange(pathSegment.Skip(1));
         }
 
-        return new ConvertedPath(cvtPathItems.ToImmutableArray(), lexedPath.IsAppend);
+        return new(cvtPathItems.ToImmutableArray());
     }
 
-    private static IEnumerable<Assignment> ComputeAssignmentsForMtx(AstNode.Branch mtx)
+    readonly record struct MakeTreeOpsState(
+        IDictionary<AssignPath, int> IdxForPartialPath,
+        AssignPath CurPath,
+        bool IsAppend // whether the path ends with an append operator
+    );
+
+    static IEnumerable<JsonTreeOp>
+        MakeTreeOps(MakeTreeOpsState state, AstNode.Branch branch)
     {
-        Dictionary<ConvertedPath, int> idxForPartialPath = new();
-        
-        IEnumerable<Assignment> Inner(ConvertedPath parentPath, AstNode node) =>
-            node.AsOneOf().Match(
-                leaf => new[] { new Assignment(parentPath, leaf) },
-                branch => branch.Items.SelectMany(
-                    item => item.Node switch
-                    {
-                        AstNode.Branch { Kind: BranchKind.ArrMtx } mtx1 =>
-                            new[] { new Assignment(ConvertPath(parentPath, item.Path, idxForPartialPath), MtxToJson(mtx1)) },
-                        AstNode.Branch { Kind: BranchKind.ObjMtx } mtx1 =>
-                            new[] { new Assignment(ConvertPath(parentPath, item.Path, idxForPartialPath), MtxToJson(mtx1)) },
-                        _ => Inner(ConvertPath(parentPath, item.Path, idxForPartialPath), item.Node)
-                    }
-                ),
-                error => throw new Exception("Asdf") // TODO
-            );
-
-        return Inner(ConvertedPath.EmptyNonAppend, mtx);
-    }
-
-    private static JsonVal.Any MtxToJson(AstNode.Branch mtx)
-    {
-        // Throw if empty??
-        
-        HashSet<JsonNode> sealedNodes = new();
-        List<(JsonArray, int)> nullsInArrays = new();
-        List<(JsonObject, string)> nullsInObjects = new();
-        JsonNode root = mtx.Kind switch
+        switch (branch.Kind)
         {
-            BranchKind.ObjMtx => new JsonObject(),
-            BranchKind.ArrMtx => new JsonArray(),
-            _ => throw new Exception("Unexpected branch kind")
-        };
-
-        JsonNode MakeNullPlaceholder() => new JsonObject { { "\uE0E1", null } };
-        
-        JsonNode? AddOrReturnExisting(JsonNode parent, PathItem pathItem, JsonNode? child)
-        {
-            return pathItem.AsOneOf().Match<JsonNode?>(
-                key =>
-                {
-                    if (parent is not JsonObject obj) { throw new Exception("Unexpected key"); } // TODO
-                    var keyStr = key.V.ToUtf16String();
-                    return obj.TryAdd(key.V.ToUtf16String(), child) ? child : obj[keyStr];
-                },
-                idx =>
-                {
-                    if (parent is not JsonArray arr) { throw new Exception("Unexpected idx"); } // TODO
-                    if (arr.Count < idx) { throw new Exception("Bad idx"); } // TODO
-                    if (arr.Count != idx) { return arr[idx]; }
-                    arr.Add(child);
-                    return child;
-                }
-            );
+            case BranchKind.ArrMtx:
+                yield return new JsonTreeOp.PushNode(state.CurPath, MtxKind.Arr, !state.IsAppend);
+                state = state with { IsAppend = false };
+                break;
+            case BranchKind.ObjMtx:
+                yield return new JsonTreeOp.PushNode(state.CurPath, MtxKind.Obj, !state.IsAppend);
+                state = state with { IsAppend = false };
+                break;
         }
-
-        var assignments = ComputeAssignmentsForMtx(mtx);
-
-        foreach (var (cvtPath, srcVal) in assignments)
+        
+        foreach (var (childPath, childAstNode) in branch.Items)
         {
-            var curNode = root;
-
-            foreach (var (elmtN, elmtNPlus1) in cvtPath.Items.Zip(cvtPath.Items[1..]))
+            MakeTreeOpsState newState = state;
+            
+            if (state.IsAppend)
             {
-                JsonNode newChild = elmtNPlus1.AsOneOf().Match<JsonNode>(k => new JsonObject(), i => new JsonArray());
-                curNode = AddOrReturnExisting(curNode, elmtN, newChild)!;
-                if (sealedNodes.Contains(curNode)) { throw new Exception("Implicit modification of sealed node"); } // TODO
-            }
-
-            if (cvtPath.IsAppend)
-            {
-                if (srcVal.V is not (JsonObject or JsonArray)) { throw new Exception(); }  // TODO
-                var dstNode = AddOrReturnExisting(curNode, cvtPath.Items[^1], srcVal.V);
-
-                if (!object.ReferenceEquals(dstNode, srcVal.V))
+                if (childPath != LexedPath.EmptyNonAppend)
                 {
-                    switch (dstNode)
-                    {
-                        case JsonObject dstObj:
-                        {
-                            if (srcVal.V is not JsonObject srcObj) { throw new Exception(); } // TODO
-                            foreach (var (key, val) in srcObj.ToList())
-                            {
-                                if (dstObj.ContainsKey(key)) { throw new Exception("TODO"); } // TODO
-                                srcObj[key] = null;
-                                dstObj[key] = val;
-                            }
-                            break;
-                        }
-                        case JsonArray dstArr:
-                        {
-                            if (srcVal.V is not JsonArray srcArr) { throw new Exception(); } // TODO
-                            foreach (var idx in Enumerable.Range(0, srcArr.Count))
-                            {
-                                var val = srcArr[idx];
-                                srcArr[idx] = null;
-                                dstArr.Add(val);
-                            }
-                            break;
-                        }
-                        default: throw new Exception("TODO");
-                    }
+                    AssignPath badAssignPath = ConvertPath(state.CurPath, childPath, state.IdxForPartialPath);
+                    yield return new JsonTreeOp.ReportErr(badAssignPath, "Append operator must be last in path");
+                    continue;
                 }
-                
-                sealedNodes.Add(dstNode);
             }
             else
             {
-                if (srcVal.V is not JsonNode jNode)
+                newState = state with
                 {
-                    jNode = MakeNullPlaceholder();
-                    cvtPath.Items[^1].AsOneOf().Switch(
-                        key => { nullsInObjects.Add((curNode.AsObject(), key.V.ToUtf16String())); },
-                        idx => { nullsInArrays.Add((curNode.AsArray(), idx)); }
-                    );
-                }
-                
-                bool nodeAdded = object.ReferenceEquals(jNode, AddOrReturnExisting(curNode, cvtPath.Items[^1], jNode));
-                if (!nodeAdded) { throw new Exception("Cannot assign"); } // TODO
-                
-                sealedNodes.Add(jNode);
+                    IsAppend = childPath.IsAppend,
+                    CurPath = ConvertPath(state.CurPath, childPath, state.IdxForPartialPath)
+                };
             }
+
+            var childOps = childAstNode.AsOneOf().Match(
+                valCell => MakeTreeOps(newState, valCell),
+                subBranch => MakeTreeOps(newState, subBranch),
+                error => MakeTreeOps(newState, error)
+            );
+            
+            foreach (var op in childOps) { yield return op; }
         }
 
-        foreach (var (objNode, key) in nullsInObjects) { objNode[key] = null; }
-        foreach (var (arrNode, idx) in nullsInArrays) { arrNode[idx] = null; }
+        if (branch.Kind != BranchKind.Range) { yield return new JsonTreeOp.PopNode(); }
+    }
 
-        return root;
+    private static IEnumerable<JsonTreeOp> MakeTreeOps(MakeTreeOpsState state, AstNode.Error error)
+    {
+        yield return new JsonTreeOp.PushNode(state.CurPath, null, !state.IsAppend);
+        yield return new JsonTreeOp.ReportErr(state.CurPath, error.V);
+        yield return new JsonTreeOp.PopNode();
+    }
+
+    static IEnumerable<JsonTreeOp> MakeTreeOps(MakeTreeOpsState state, AstNode.ValCell valCell)
+    {
+        var (idxForPartialPath, parentPath, isAppend) = state;
+        
+        if (!isAppend)
+        {
+            yield return new JsonTreeOp.Create(parentPath, valCell.V);
+            yield break;
+        }
+        
+        switch (valCell.V.V)
+        {
+            case JsonObject obj:
+                yield return new JsonTreeOp.PushNode(parentPath, MtxKind.Obj, false);
+                foreach (var (key, val) in obj)
+                {
+                    AssignPath childPath = new(parentPath.Items.Append(new PathItem.Key(key)).ToImmutableArray());
+                    yield return new JsonTreeOp.Create(childPath, new AstNode.ValCell(val));
+                }
+                yield return new JsonTreeOp.PopNode();
+                yield break;
+            case JsonArray arr:
+                // yield return new(parentPath, valCell, AssignKind.Open);
+                yield return new JsonTreeOp.PushNode(parentPath, MtxKind.Arr, false);
+                if (!idxForPartialPath.TryGetValue(parentPath, out var startIdx)) { startIdx = 0; }
+                foreach (var i in Enumerable.Range(startIdx, arr.Count))
+                {
+                    AssignPath childPath = new(parentPath.Items.Append(new PathItem.Idx(i)).ToImmutableArray());
+                    yield return new JsonTreeOp.Create(childPath, new AstNode.ValCell(arr[i]));
+                }
+                yield return new JsonTreeOp.PopNode();
+                yield break;
+            default:
+                yield return new JsonTreeOp.PushNode(parentPath, null, false);
+                yield return new JsonTreeOp.ReportErr(parentPath, "Value cannot be appended");
+                yield return new JsonTreeOp.PopNode();
+                yield break;
+        }
+    }
+
+    public static IReadOnlyList<JsonTreeOp> AstToJsonTreeOps(AstNode root)
+    {
+        MakeTreeOpsState initialState = new(new Dictionary<AssignPath, int>(), AssignPath.Empty, false);
+        return root.AsOneOf().Match(
+            valCell => MakeTreeOps(initialState, valCell),
+            subBranch => MakeTreeOps(initialState, subBranch),
+            error => MakeTreeOps(initialState, error)
+        ).ToList();
+    }
+
+    static IEnumerable<(AssignPath, AstNode)> MakeTreeOps(AssignPath parentPath, AstNode.Error error)
+    {
+        yield return (parentPath, error);
+    }
+}
+
+internal static class Construction
+{
+    private abstract record JsonLoc : IUnion<JsonLoc, JsonLoc.InObj, JsonLoc.InArr>
+    {
+        public sealed record InObj(JsonObject obj, string key) : JsonLoc;
+        public sealed record InArr(JsonArray arr, int idx) : JsonLoc;
+    }
+
+    private abstract record SetNodeAtLocRslt
+        : IUnion<SetNodeAtLocRslt, SetNodeAtLocRslt.WasSet, SetNodeAtLocRslt.WasNodeSet, SetNodeAtLocRslt.Error>
+    {
+        public sealed record WasSet : SetNodeAtLocRslt;
+        public sealed record WasNodeSet(JsonNode? V) : SetNodeAtLocRslt;
+        public sealed record Error(string Msg) : SetNodeAtLocRslt;
     }
     
-    public static JsonVal.Any AstToJson(AstNode astNode) => astNode.AsOneOf().Match(
-        valCell => valCell.V,
-        MtxToJson,
-        err => throw new Exception("TODO") // Ensure this is unreachable at this point
-    );
+    private static SetNodeAtLocRslt SetNodeAtLoc(JsonLoc location, JsonNode? newNode) =>
+        location.AsOneOf().Match<SetNodeAtLocRslt>(
+            locInObj =>
+            {
+                var (obj, key) = locInObj;
+                if (obj.TryGetPropertyValue(key, out var existing))
+                {
+                    return new SetNodeAtLocRslt.WasNodeSet(existing);
+                }
+                obj[key] = newNode;
+                return new SetNodeAtLocRslt.WasSet();
+            },
+            locInArr =>
+            {
+		        var (arr, idx) = locInArr;
+                if (idx == arr.Count)
+                {
+			        arr.Add(newNode);
+			        return new SetNodeAtLocRslt.WasSet();
+		        }
+                else if (idx == (arr.Count - 1))
+                {
+			        return new SetNodeAtLocRslt.WasNodeSet(arr[idx]);
+		        }
+                return new SetNodeAtLocRslt.Error("bad idx");
+            }
+        );
+
+    public static JsonVal.Any ConstructFromTreeOps(IReadOnlyList<JsonTreeOp> treeOps)
+    {
+        var superRoot = new JsonArray();
+        JsonLoc rootLoc = new JsonLoc.InArr(superRoot, 0);
+        HashSet<JsonLoc> sealedLocs = new();
+        Stack<JsonLoc> pushedNodes = new();
+
+        foreach (var treeOp in treeOps) // TEMP
+        {
+            if (treeOp.AsOneOf().TryPickT1(out JsonTreeOp.PopNode popNode, out var pushOrCreateOrReport))
+            {
+                pushedNodes.Pop();
+                continue;
+            }
+
+            var path = pushOrCreateOrReport.Match(
+                push => push.Path,
+                create => create.Path,
+                report => report.Path
+            );
+            
+            var nodeLoc = rootLoc;
+
+            foreach (var pathItem in path.Items)
+            {
+                if (sealedLocs.Contains(nodeLoc))
+                {
+                    throw new Exception("TODO");
+                }
+                
+                pathItem.AsOneOf().Switch(
+                    key =>
+                    {
+                        var newObj = new JsonObject();
+                        var objForNextLoc =
+                            SetNodeAtLoc(nodeLoc, newObj).AsOneOf().Match<JsonObject>(
+                                success => newObj,
+                                existing =>
+                                {
+                                    if (existing.V is JsonObject existingObj) { return existingObj; }
+                                    throw new Exception("TODO");
+                                },
+                                err =>
+                                {
+                                    throw new Exception("TODO");
+                                }
+                            );
+                        nodeLoc = new JsonLoc.InObj(objForNextLoc, key.V.ToUtf16String());
+                    },
+                    idx =>
+                    {
+                        var newArr = new JsonArray();
+                        var arrForNextLoc =
+                            SetNodeAtLoc(nodeLoc, newArr).AsOneOf().Match<JsonArray>(
+                                success => newArr,
+                                existing =>
+                                {
+                                    if (existing.V is JsonArray existingArr) { return existingArr; }
+                                    throw new Exception("TODO");
+                                },
+                                err =>
+                                {
+                                    throw new Exception("TODO");
+                                }
+                            );
+                        nodeLoc = new JsonLoc.InArr(arrForNextLoc, idx.V);
+                    }
+                );
+            }
+
+            if (pushOrCreateOrReport.TryPickT2(out JsonTreeOp.ReportErr reportErr, out var pushOrCreate))
+            {
+                throw new Exception("TODO");
+            }
+
+            var valueToSet = pushOrCreate.Match<JsonNode?>(
+                push => push.NodeKind switch
+                {
+                    MtxKind.Obj => new JsonObject(),
+                    MtxKind.Arr => new JsonArray(),
+                    _ => null
+                },
+                create => create.Value
+            );
+
+            var (mustBeNew, seal) = pushOrCreate.Match(push => (push.MustBeNew, false), create => (true, true));
+            
+            SetNodeAtLoc(nodeLoc, valueToSet).AsOneOf().Switch(
+                success => { },
+                existing =>
+                {
+                    if (mustBeNew) { throw new Exception("TODO"); }
+                    // can't overwrite open node
+                },
+                err =>
+                {
+                    throw new Exception("TODO"); // handle same way as above
+                }
+            );
+            
+            if (seal) { sealedLocs.Add(nodeLoc); }
+            if (pushOrCreate.IsT0) { pushedNodes.Push(nodeLoc); }
+        }
+        
+        var rVal = superRoot[0];
+        superRoot.Clear();
+        return rVal;
+    }
 }

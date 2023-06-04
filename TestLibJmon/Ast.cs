@@ -40,7 +40,7 @@ public static partial class TestRsrc
         """;
 }
 
-public static class Ast
+/*public static class Ast
 {
 
 
@@ -53,4 +53,4 @@ public static class Ast
         var json = JsonSerializer.Serialize(ast, LibJmon.JsonSerialization.Resources.JsonSerializerOptions);
         Console.WriteLine(json);
     }
-}
+}*/

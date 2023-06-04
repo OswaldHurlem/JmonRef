@@ -19,7 +19,7 @@ public abstract record JsonVal : IUnion<JsonVal, JsonVal.Any, JsonVal.Str>
         public bool Equals(Any? other) => V?.ToJsonString() == other?.V?.ToJsonString();
         public override int GetHashCode() => V?.ToJsonString()?.GetHashCode() ?? 0;
         
-        public string ToUtf16String() => V?.ToJsonString() ?? "null";
+        public string ToUtf16String(JsonSerializerOptions options) => V?.ToJsonString(options) ?? "null";
     }
     
     public sealed record Str(string V) : JsonVal, IImplicitConversion<Str, string>
@@ -42,11 +42,6 @@ public sealed record LexedPath(ImmutableArray<PathItem> Items, bool IsAppend) : 
 {
     public bool IdxsAreValid() => Items.OfType<PathItem.Idx>().All(i => i.V is 0 or 1);
     public static LexedPath EmptyNonAppend => new(ImmutableArray<PathItem>.Empty, false);
-}
-
-public sealed record ConvertedPath(ImmutableArray<PathItem> Items, bool IsAppend) : PathBase(Items, IsAppend)
-{
-    public static ConvertedPath EmptyNonAppend => new(ImmutableArray<PathItem>.Empty, false);
 }
 
 public abstract record PathItem : IUnion<PathItem, PathItem.Key, PathItem.Idx>
@@ -119,6 +114,7 @@ public abstract record AstNode : IUnion<AstNode, AstNode.ValCell, AstNode.Branch
     }
 }
 
+// TODO remove and replace with MtxKind?
 public enum BranchKind { ArrMtx = 0, ObjMtx = 1, Range = 2 };
 
 public readonly record struct BranchItem(LexedPath Path, AstNode Node);
@@ -131,4 +127,27 @@ public static class MtxKindConversion
         MtxKind.Obj => BranchKind.ObjMtx,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
+}
+
+public readonly record struct AssignPath(ImmutableArray<PathItem> Items)
+{
+    public bool Equals(AssignPath other) => Items.SequenceEqual(other.Items);
+    public override int GetHashCode() => Items.Aggregate(0, HashCode.Combine);
+    
+    public static AssignPath Empty => new(ImmutableArray<PathItem>.Empty);
+    
+    public static implicit operator ImmutableArray<PathItem>(AssignPath p) => p.Items;
+    public static implicit operator AssignPath(ImmutableArray<PathItem> items) => new(items);
+}
+
+public abstract record JsonTreeOp()
+    : IUnion<JsonTreeOp, JsonTreeOp.PushNode, JsonTreeOp.PopNode, JsonTreeOp.Create, JsonTreeOp.ReportErr>
+{
+    public sealed record PushNode(AssignPath Path, MtxKind? NodeKind, bool MustBeNew) : JsonTreeOp();
+    public sealed record PopNode() : JsonTreeOp();
+    public sealed record Create(AssignPath Path, JsonVal.Any Value) : JsonTreeOp();
+    public sealed record ReportErr(AssignPath Path, string Message) : JsonTreeOp();
+
+    // public sealed record Open(AssignPath Path, MtxKind MtxKind, bool MustBeNew) : JsonTreeOp(Path);
+
 }

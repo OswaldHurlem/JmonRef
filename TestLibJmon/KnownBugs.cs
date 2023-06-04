@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Nodes;
+using LibJmon;
 using LibJmon.Impl;
 using LibJmon.Types;
 
@@ -16,11 +17,11 @@ public static class KnownBugs
             .+,00,01
             """;
 
-        string[,] cells = CsvUtil.MakeCells(aoaCsv, ",");
-        LexedCell[,] lexedCells = TestingApi.LexCells(cells);
-        AstNode ast = TestingApi.ParseLexedCells(lexedCells);
-        var parsedVal = LibJmon.TestingApi.AstToJson(ast);
-        JsonArray? arr = parsedVal.V?.AsArray();
+        string[,] cells = CsvUtil.CsvToCells(aoaCsv, ",");
+        string json = ApiV0.ParseJmon(cells, new() { WriteIndented = true });
+
+        JsonNode? node = JsonNode.Parse(json);
+        JsonArray? arr = node?.AsArray();
         Assert.Equal(1, arr?.Count);
         JsonArray? innerArr0 = arr?[0]?.AsArray();
         Assert.Equal(2, innerArr0?.Count);
@@ -28,7 +29,7 @@ public static class KnownBugs
         Assert.Equal("01", (string?)innerArr0?[1]);
     }
 
-    private const string desiredAst = """
+    /*private const string desiredAst = """
     {
         "Type":"Branch",
         "Val":{
@@ -88,5 +89,5 @@ public static class KnownBugs
         Assert.Equal(2, innerArr0?.Count);
         Assert.Equal("00", (string?)innerArr0?[0]);
         Assert.Equal("01", (string?)innerArr0?[1]);
-    }
+    }*/
 }

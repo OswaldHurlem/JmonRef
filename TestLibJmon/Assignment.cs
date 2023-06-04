@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using LibJmon;
 using LibJmon.Impl;
 using LibJmon.Types;
 
@@ -9,16 +10,8 @@ public static class Assignment
     [Fact]
     public static void TempTest3()
     {
-        string[,] cells = CsvUtil.MakeCells(TestRsrc.JmonSampleNoAppend, "|");
-        LexedCell[,] lexedCells = TestingApi.LexCells(cells);
-        AstNode ast = TestingApi.ParseLexedCells(lexedCells);
-        var parsedVal = LibJmon.TestingApi.AstToJson(ast);
-        JsonSerializerOptions optionsButPretty = new(LibJmon.JsonSerialization.Resources.JsonSerializerOptions)
-        {
-            WriteIndented = true,
-            
-        };
-        var json = JsonSerializer.Serialize(parsedVal, optionsButPretty);
+        string[,] cells = CsvUtil.CsvToCells(TestRsrc.JmonSampleNoAppend, "|");
+        string json = ApiV0.ParseJmon(cells, new() { WriteIndented = true });
         Assert.Equal(expJsonPretty, json);
     }
 
