@@ -4,8 +4,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using LibJmon.Types;
-using OneOf;
-using OneOf.Types;
 using LibJmon.Linq;
 using LibJmon.Sheets;
 using LibJmon.SuperTypes;
@@ -184,7 +182,7 @@ internal static partial class Lexing
                     string jsonCode = trimmedText.StartsWith(":::")
                         ? trimmedText[3..]
                         : trimmedText.StartsWith("::")
-                            ? trimmedText[2..]
+                            ? StrUtil.ConvertSqJsonStrToDq(trimmedText[2..])
                             : throw MakeLexingExc(coord, "Cell begins with ':' but is not a valid header");
     
                     try
@@ -226,7 +224,6 @@ internal static class Ast
             .ToList();
 
         // Special case for when row is blank
-        // TODO consider changing this so that between 0 and first non-blank is a range with implicit path of `.`
         // (Will have same effect for blank row)
         if (seq.Count == 0) { return new[] { (LexedPath.EmptyNonAppend, 0, cellSeq.Count) }; }
         
@@ -480,7 +477,9 @@ internal static class JsonTreeOps
         {
             case JsonObject obj:
                 yield return new JsonTreeOp.PushNode(parentPath, MtxKind.Obj, false);
-                foreach (var (key, val) in obj)
+                var objElmts = obj.ToList();
+                obj.Clear();
+                foreach (var (key, val) in objElmts)
                 {
                     AssignPath childPath = new(parentPath.Items.Append(new PathItem.Key(key)).ToImmutableArray());
                     yield return new JsonTreeOp.Create(childPath, new AstNode.ValCell(val));
@@ -490,11 +489,13 @@ internal static class JsonTreeOps
             case JsonArray arr:
                 // yield return new(parentPath, valCell, AssignKind.Open);
                 yield return new JsonTreeOp.PushNode(parentPath, MtxKind.Arr, false);
-                if (!idxForPartialPath.TryGetValue(parentPath, out var startIdx)) { startIdx = 0; }
-                foreach (var i in Enumerable.Range(startIdx, arr.Count))
+                var arrElmts = arr.ToList();
+                arr.Clear();
+                foreach (var arrElmt in arrElmts)
                 {
-                    AssignPath childPath = new(parentPath.Items.Append(new PathItem.Idx(i)).ToImmutableArray());
-                    yield return new JsonTreeOp.Create(childPath, new AstNode.ValCell(arr[i]));
+                    var lexedPath = new LexedPath(ImmutableArray.Create<PathItem>(PathItem.ArrayPlus), false);
+                    var assignPath = ConvertPath(parentPath, lexedPath, idxForPartialPath);
+                    yield return new JsonTreeOp.Create(assignPath, new AstNode.ValCell(arrElmt));
                 }
                 yield return new JsonTreeOp.PopNode();
                 yield break;

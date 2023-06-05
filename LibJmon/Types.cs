@@ -114,7 +114,6 @@ public abstract record AstNode : IUnion<AstNode, AstNode.ValCell, AstNode.Branch
     }
 }
 
-// TODO remove and replace with MtxKind?
 public enum BranchKind { ArrMtx = 0, ObjMtx = 1, Range = 2 };
 
 public readonly record struct BranchItem(LexedPath Path, AstNode Node);
@@ -147,7 +146,4 @@ public abstract record JsonTreeOp()
     public sealed record PopNode() : JsonTreeOp();
     public sealed record Create(AssignPath Path, JsonVal.Any Value) : JsonTreeOp();
     public sealed record ReportErr(AssignPath Path, string Message) : JsonTreeOp();
-
-    // public sealed record Open(AssignPath Path, MtxKind MtxKind, bool MustBeNew) : JsonTreeOp(Path);
-
 }

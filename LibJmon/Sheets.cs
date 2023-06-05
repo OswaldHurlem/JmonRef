@@ -95,7 +95,6 @@ internal static class SubSheet
 
 internal readonly record struct SubSheet<T>(ReadOnlyMemory2D<T> NonTposedMem, Coord OuterBeg, bool IsTposed)
 {
-    // TODO move to Ext?
     private ReadOnlySpan2D<T> NonTposedSpan => NonTposedMem.Span;
 
     public T this[Coord coord] => this[coord.Row, coord.Col];
@@ -146,7 +145,7 @@ internal static class SubSheetExt
         var (rows, cols) = nonTpInnerRect.ToRanges();
 
         // https://github.com/CommunityToolkit/dotnet/issues/673
-        // TODO: Revise if updating CommunityToolkit.HighPerformance
+        // Revise if updating CommunityToolkit.HighPerformance
         var buggyRows = sheet.NonTposedMem.Height..sheet.NonTposedMem.Height;
         var buggyCols = sheet.NonTposedMem.Width..sheet.NonTposedMem.Width;
         if (rows.Equals(buggyRows)) { rows = 0..0; }

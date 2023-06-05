@@ -98,13 +98,3 @@ internal static class UnionUtil
             _ => throw new Exception(),
         };
 }
-
-// TODO replace some nulls w/ OneOf<T,None>
-internal static class NullableExt
-{
-    public static OneOf<T, None> ToOneOf<T>(this T? v)
-    {
-        if (v is {} notNull) { return notNull; }
-        return new None();
-    }
-}
