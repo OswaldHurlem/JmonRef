@@ -916,7 +916,7 @@ A JMON Parser will parse the above JMON Sheet into the following JSON Text:
             },
             "owl": {
                 "name": "Mooncry",
-                "model": { "day": null, "night": "owl_flying_mech" }
+                "model": { "night": "owl_flying_mech" }
             }
         },
         "h33lz": {
