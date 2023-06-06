@@ -3,32 +3,32 @@ using OneOf.Types;
 
 namespace LibJmon.SuperTypes;
 
-public interface IImplicitConversion<TSelf, TOther>
+internal interface IImplicitConversion<TSelf, TOther>
     where TSelf : IImplicitConversion<TSelf, TOther>
 {
     static abstract implicit operator TOther(TSelf from);
     static abstract implicit operator TSelf(TOther to);
 }
 
-public interface IUnion<TBase, TDer0, TDer1>
+internal interface IUnion<TBase, TDer0, TDer1>
     where TBase : IUnion<TBase, TDer0, TDer1>
     where TDer0 : TBase
     where TDer1 : TBase { }
 
-public interface IUnion<TBase, TDer0, TDer1, TDer2>
+internal interface IUnion<TBase, TDer0, TDer1, TDer2>
     where TBase : IUnion<TBase, TDer0, TDer1, TDer2>
     where TDer0 : TBase
     where TDer1 : TBase
     where TDer2 : TBase { }
 
-public interface IUnion<TBase, TDer0, TDer1, TDer2, TDer3>
+internal interface IUnion<TBase, TDer0, TDer1, TDer2, TDer3>
     where TBase : IUnion<TBase, TDer0, TDer1, TDer2, TDer3>
     where TDer0 : TBase
     where TDer1 : TBase
     where TDer2 : TBase
     where TDer3 : TBase { }
 
-public interface IUnion<TBase, TDer0, TDer1, TDer2, TDer3, TDer4>
+internal interface IUnion<TBase, TDer0, TDer1, TDer2, TDer3, TDer4>
     where TBase : IUnion<TBase, TDer0, TDer1, TDer2, TDer3, TDer4>
     where TDer0 : TBase
     where TDer1 : TBase

@@ -158,5 +158,5 @@ internal abstract record JsonTreeOp
     public sealed record PushNode(AssignPath Path, MtxKind? NodeKind, bool MustBeNew, Rect ContribCells) : JsonTreeOp;
     public sealed record PopNode : JsonTreeOp;
     public sealed record Create(AssignPath Path, JsonVal.Any Value, Rect ContribCells) : JsonTreeOp;
-    public sealed record ReportErr(AssignPath Path, ParseErr Err) : JsonTreeOp;
+    public sealed record ReportErr(AssignPath Path, JmonParseErr Err) : JsonTreeOp;
 }

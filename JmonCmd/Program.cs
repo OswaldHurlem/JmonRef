@@ -1,6 +1,30 @@
 ﻿using System.Text.Json;
 using LibJmon;
 
+const int kErrCode = -1;
+
+void LogLexingErr(JmonLexErr e)
+{
+    Console.WriteLine($"\tMsg: {e.Msg}");
+    Console.WriteLine($"\tCoord: {e.Coord}");
+    if (e.LexedExpression is not null)
+    {
+        var expr = e.LexedExpression;
+        if (expr.Length > 50) { expr = $"{expr[..50]}.."; }
+        Console.WriteLine($"\tLexedExpression: {expr}");
+    }
+}
+
+void LogParseErr(JmonParseErr e)
+{
+    Console.WriteLine($"\tPath: {e.Path}");
+    Console.WriteLine($"\tMsg: {e.Msg}");
+    if (e.FocusCell is not null) { Console.WriteLine($"\tFocusCell: {e.FocusCell}"); }
+    Console.WriteLine($"\tExprCells: {e.ExprCells}");
+}
+
+// Top-Level statement
+
 if (!args.Any())
 {
     throw new Exception("No CSV file specified");
@@ -15,30 +39,30 @@ try
 {
     string json = ApiV0.ParseJmon(cells, jsonOpts);
     Console.WriteLine(json);
+    return 0;
 }
-catch (JmonException<LexingErr> e)
+catch (JmonException e) when (e.JmonErr is JmonLexErr lexErr)
 {
     Console.WriteLine("Encountered lexing error:");
-    LogLexingErr(e.JmonErr);
-    return -1;
+    LogLexingErr(lexErr);
+    return kErrCode;
 }
-catch (JmonException<ParseErr> e)
+catch (JmonException e) when (e.JmonErr is JmonParseErr parseErr)
 {
     Console.WriteLine("Encountered parsing error:");
-    LogParseErr(e.JmonErr);
-    return -1;
+    LogParseErr(parseErr);
+    return kErrCode;
 }
-catch (JmonException<MultiErr> e)
+catch (JmonException e) when (e.JmonErr is JmonMultiErr multiErr)
 {
-    var allErrs = e.JmonErr.Errs;
-    var lexingErrs = allErrs.OfType<LexingErr>().ToList();
-    var parseErrs = allErrs.OfType<ParseErr>().ToList();
-    var otherErrs = allErrs.Where(e => e is not (LexingErr or ParseErr)).ToList();
+    var lexingErrs = multiErr.Errs.OfType<JmonLexErr>().ToList();
+    var parseErrs = multiErr.Errs.OfType<JmonParseErr>().ToList();
+    var otherErrs = multiErr.Errs.Where(err => err is not (JmonLexErr or JmonParseErr)).ToList();
 
     if (lexingErrs.Any())
     {
         Console.WriteLine($"Encountered {lexingErrs.Count} lexing errors:");
-        foreach (var (lexingErr, idx) in lexingErrs.Select((e, i) => (e, i)))
+        foreach (var (lexingErr, idx) in lexingErrs.Select((o, i) => (o, i)))
         {
             Console.WriteLine($"Lexing error {idx}:");
             LogLexingErr(lexingErr);
@@ -48,7 +72,7 @@ catch (JmonException<MultiErr> e)
     if (parseErrs.Any())
     {
         Console.WriteLine($"Encountered {parseErrs.Count} parsing errors:");
-        foreach (var (parseErr, idx) in parseErrs.Select((e, i) => (e, i)))
+        foreach (var (parseErr, idx) in parseErrs.Select((o, i) => (o, i)))
         {
             Console.WriteLine($"Parsing error {idx}:");
             LogParseErr(parseErr);
@@ -57,24 +81,8 @@ catch (JmonException<MultiErr> e)
 
     if (otherErrs.Any())
     {
-        throw new JmonException<MultiErr>(new(otherErrs));
+        throw new JmonException(new JmonMultiErr(otherErrs));
     }
 
-    return -1;
-}
-
-return 0;
-
-void LogLexingErr(LexingErr e)
-{
-    Console.WriteLine($"\tMsg: {e.Msg}");
-    Console.WriteLine($"\tCoord: {e.Coord}");
-}
-
-void LogParseErr(ParseErr e)
-{
-    Console.WriteLine($"\tPath: {e.Path}");
-    Console.WriteLine($"\tMsg: {e.Msg}");
-    Console.WriteLine($"\tFocusCell: {e.FocusCell}");
-    Console.WriteLine($"\tExprCells: {e.ExprCells}");
+    return kErrCode;
 }

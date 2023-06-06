@@ -90,9 +90,8 @@ internal static class RectExt
 
     public static CellRect ToPublic(this Rect r)
     {
-        var (row, col) = r.Beg;
-        var (h, w) = r.Dims();
-        return new CellRect(row, col, h, w);
+        var ranges = r.ToRanges();
+        return new CellRect(ranges.rows, ranges.cols);
     }
 }
 
