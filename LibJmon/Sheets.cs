@@ -34,6 +34,8 @@ internal static class CoordExt
     public static Coord SwizRR(this Coord c) => (c.Row, c.Row);
     
     public static (int row, int col) ToTuple(this Coord c) => (c.Row, c.Col);
+    
+    public static CellCoord ToPublic(this Coord c) => new(c.Row, c.Col);
 }
 
 internal readonly record struct Rect(Coord Beg, Coord End)
@@ -85,6 +87,13 @@ internal static class RectExt
         r.CoordSeq().SkipWhile(c => c != first).TakeWhile(c => c != last);
     
     public static (Range rows, Range cols) ToRanges(this Rect r) => (r.Beg.Row..r.End.Row, r.Beg.Col..r.End.Col);
+
+    public static CellRect ToPublic(this Rect r)
+    {
+        var (row, col) = r.Beg;
+        var (h, w) = r.Dims();
+        return new CellRect(row, col, h, w);
+    }
 }
 
 internal static class SubSheet

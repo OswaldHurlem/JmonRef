@@ -7,7 +7,8 @@ using LibJmon.Types;
 using LibJmon.Linq;
 using LibJmon.Sheets;
 using LibJmon.SuperTypes;
-
+using OneOf;
+using OneOf.Types;
 using TempError = OneOf.Types.Error<string>;
 
 namespace LibJmon.Impl;
@@ -58,14 +59,12 @@ internal static partial class Lexing
         bool isAppend = false;
         var remPathExpr = pathExpr;
 
-        int itemIdx = 0;
-        
-        JmonException<LexingError> MakeExcForCurrentItem(string msg) =>
-            new(new LexingError(coord.Row, coord.Col, $"Error when parsing path item {itemIdx}: {msg}"));
+        JmonException<LexingErr> MakeExcForCurrentItem(string msg) =>
+            new(new LexingErr($"Error when parsing path item {pathItems.Count}: {msg}.", coord.ToPublic()));
         
         while (!remPathExpr.IsEmpty)
         {
-            if (!remPathExpr.StartsWith(kDot)) { throw MakeExcForCurrentItem("Expected '.' preceding path item."); }
+            if (!remPathExpr.StartsWith(kDot)) { throw MakeExcForCurrentItem("Expected '.' preceding path item"); }
             
             remPathExpr = remPathExpr[1..].TrimStart();
             if (remPathExpr.IsEmpty) { break; }
@@ -102,7 +101,11 @@ internal static partial class Lexing
                     }
                     catch (JsonException jsonExc)
                     {
-                        throw MakeLexingExcFromJsonExc(coord, jsonExc, $"parsing JSON string for path item {itemIdx}");
+                        throw MakeLexingExcFromJsonExc(
+                            coord,
+                            jsonExc,
+                            $"parsing JSON string for path item {pathItems.Count}"
+                        );
                     }
                     
                     remPathExpr = remPathExpr[(idx+len)..].TrimStart();
@@ -124,7 +127,7 @@ internal static partial class Lexing
                         throw MakeLexingExcFromJsonExc(
                             coord,
                             jsonExc,
-                            $"parsing single-quoted string for path item {itemIdx}"
+                            $"parsing single-quoted string for path item {pathItems.Count}"
                         );
                     }
                     remPathExpr = remPathExpr[(idx+len)..].TrimStart();
@@ -146,13 +149,13 @@ internal static partial class Lexing
         return path;
     }
 
-    private static JmonException<LexingError> MakeLexingExc(Coord coord, string msg) =>
-        new(new(coord.Row, coord.Col, msg));
+    private static JmonException<LexingErr> MakeLexingExc(Coord coord, string msg) =>
+        new(new(msg, coord.ToPublic()));
     
-    private static JmonException<LexingError>
+    private static JmonException<LexingErr>
         MakeLexingExcFromJsonExc(Coord coord, JsonException jsonException, string context) =>
         new(
-            new(coord.Row, coord.Col, $"JsonException encountered while {context}: {jsonException.Message}"),
+            new($"JsonException encountered while {context}: {jsonException.Message}", coord.ToPublic()),
             jsonException
         );
 
@@ -160,6 +163,7 @@ internal static partial class Lexing
     {
         var rect = new Rect((0, 0), (cells.GetLength(0), cells.GetLength(1)));
         var lexedCells = new LexedCell[rect.Dims().Row, rect.Dims().Col];
+        List<LexingErr> errs = new();
 
         foreach (var coord in rect.CoordSeq())
         {
@@ -202,13 +206,14 @@ internal static partial class Lexing
                     cellRef = new LexedCell.JVal(nodeOrNull);
                 }
             }
-            catch (JmonException<LexingError> e)
+            catch (JmonException<LexingErr> e)
             {
-                // TODO: Maybe have a mode where these errors are aggregated into a list?
-                // (For now, a stack trace is more useful)
-                throw;
+                errs.Add(e.JmonErr);
             }
         }
+        
+        if (errs.Count() == 1) { throw new JmonException<LexingErr>(errs.First()); }
+        if (errs.Any()) { throw new JmonException<MultiErr>(new(errs)); }
         
         return lexedCells;
     }
@@ -232,7 +237,12 @@ internal static class Ast
     }
 
     private static IEnumerable<BranchItem>
-        ParsePathCols(SubSheet<LexedCell> pathCols, SubSheet<LexedCell> pathRows, SubSheet<LexedCell> interior)
+        ParsePathCols(
+            SubSheet<LexedCell> pathCols,
+            SubSheet<LexedCell> pathRows,
+            SubSheet<LexedCell> interior,
+            Rect mtxRect
+        )
     {
         var seq = GetPathRanges(pathCols.SliceCols(..1).CellSeq().ToList());
         var remCols = pathCols.SliceCols(1..);
@@ -241,8 +251,8 @@ internal static class Ast
         {
             foreach (var (path, begRow, endRow) in seq)
             {
-                var branchItems = ParsePathRows(pathRows, interior.SliceRows(begRow..endRow));
-                AstNode.Branch prop = new(branchItems.ToImmutableArray(), BranchKind.Range);
+                var branchItems = ParsePathRows(pathRows, interior.SliceRows(begRow..endRow), mtxRect);
+                AstNode.Branch prop = new(branchItems.ToImmutableArray(), BranchKind.Range, mtxRect);
                 yield return new(path, prop);
             }
             yield break;
@@ -250,15 +260,19 @@ internal static class Ast
         
         foreach (var (path, begRow, endRow) in seq)
         {
-            var branchItems =
-                ParsePathCols(remCols.SliceRows(begRow..endRow), pathRows, interior.SliceRows(begRow..endRow));
-            AstNode.Branch prop = new(branchItems.ToImmutableArray(), BranchKind.Range);
+            var branchItems = ParsePathCols(
+                remCols.SliceRows(begRow..endRow),
+                pathRows,
+                interior.SliceRows(begRow..endRow),
+                mtxRect
+            );
+            AstNode.Branch prop = new(branchItems.ToImmutableArray(), BranchKind.Range, mtxRect);
             yield return new(path, prop);
         }
     }
 
     private static IEnumerable<BranchItem>
-        ParsePathRows(SubSheet<LexedCell> pathRows, SubSheet<LexedCell> interior)
+        ParsePathRows(SubSheet<LexedCell> pathRows, SubSheet<LexedCell> interior, Rect mtxRect)
     {
         var seq = GetPathRanges(pathRows.SliceRows(0..1).CellSeq().ToList());
         var remRows = pathRows.SliceRows(1..);
@@ -275,18 +289,27 @@ internal static class Ast
 
         foreach (var (path, begCol, endCol) in seq)
         {
-            var subSeq = ParsePathRows(remRows.SliceCols(begCol..endCol), interior.SliceCols(begCol..endCol));
-            AstNode.Branch prop = new(subSeq.ToImmutableArray(), BranchKind.Range);
+            var subSeq = ParsePathRows(remRows.SliceCols(begCol..endCol), interior.SliceCols(begCol..endCol), mtxRect);
+            AstNode.Branch prop = new(subSeq.ToImmutableArray(), BranchKind.Range, mtxRect);
             yield return new(path, prop);
         }
     }
 
     private record StrayCell(Coord Coord, string Type);
 
-    private static AstNode.Error StrayCellAtInnerCoord(SubSheet<LexedCell> sheet, Coord innerCoord)
+    // TODO include context
+    private static AstNode.Error StrayCellAtInnerCoord(SubSheet<LexedCell> sheet, Coord innerCoord, string parseDesc)
     {
-        var obj = new StrayCell(sheet.ToOuter(innerCoord), sheet[innerCoord].GetType().Name);
-        return new AstNode.Error(obj.ToString());
+        string cellDesc = sheet[innerCoord].AsOneOf().Match(
+            blank => "Blank Cell",
+            path => "Path Cell",
+            jval => "JSON Literal",
+            mtxHead => "Matrix Header"
+        );
+        var oRect = sheet.OuterRect;
+        Coord coord = sheet.ToOuter(innerCoord);
+        string msg = $"Found unexpected {cellDesc} at {coord.ToPublic()} (while parsing {parseDesc}).";
+        return new AstNode.Error(coord, msg, sheet.OuterRect);
     }
 
     private static AstNode ParseMtx(SubSheet<LexedCell> subSheet)
@@ -294,43 +317,68 @@ internal static class Ast
         var (mtxKind, isTp) = (subSheet[0, 0] as LexedCell.MtxHead)!; 
         subSheet = isTp ? subSheet.Tpose() : subSheet;
 
-        AstNode? FindStray(SubSheet<LexedCell> sheet, int skip, Func<LexedCell, bool> pred) =>
+        AstNode.Error? FindStray(SubSheet<LexedCell> sheet, int skip, Func<LexedCell, bool> pred, string context) =>
             sheet.CoordAndCellSeq().Skip(skip).Find(pred) switch
             {
-                Coord strayCoord => StrayCellAtInnerCoord(sheet, strayCoord),
+                Coord strayCoord => StrayCellAtInnerCoord(sheet, strayCoord, context),
                 _ => null
             };
 
         var pathRowBegOrNull = subSheet.CoordAndCellSeq().Find(cell => cell is LexedCell.Path);
         if (pathRowBegOrNull is not Coord pathRowBeg)
         {
-            return FindStray(subSheet, 1, cell => cell is not LexedCell.Blank) switch
+            return FindStray(subSheet, 1, cell => cell is not LexedCell.Blank, "Matrix with no Paths") switch
             {
                 { } strayInEmptyMtx => strayInEmptyMtx,
-                _ => AstNode.Branch.Empty(mtxKind.ToBranchKind())
+                _ => AstNode.Branch.Empty(mtxKind.ToBranchKind(), subSheet.OuterRect)
             };
         }
 
         var pathColSearchRange = subSheet.SliceCols(0..pathRowBeg.Col).Tpose();
         var pathColBegOrNull = pathColSearchRange.CoordAndCellSeq().Find(cell => cell is LexedCell.Path);
         // TODO improve this error. Situation is that no pathColBeg can be found given a pathRowBeg
-        if (pathColBegOrNull is not Coord pathColBeg) { return StrayCellAtInnerCoord(subSheet, pathRowBeg); }
+        if (pathColBegOrNull is not Coord pathColBeg)
+        {
+            return new AstNode.Error(
+                subSheet.ToOuter(pathRowBeg),
+                isTp ? "Transposed Matrix has path column but no path row." : "Matrix has path row but no path column.",
+                subSheet.OuterRect
+            );
+        }
         pathColBeg = subSheet.ToInner(pathColSearchRange.ToOuter(pathColBeg));
 
         var ((margin, pathRows), (pathCols, interior)) = subSheet.Quarter((pathColBeg.Row, pathRowBeg.Col));
-        
-        if (FindStray(margin, 1, cell => cell is not LexedCell.Blank) is {} strayInMargin) { return strayInMargin; }
-        if (FindStray(pathRows, 0, cell => cell.IsHeader()) is {} strayInPathRows) { return strayInPathRows; }
-        if (FindStray(pathCols, 0, cell => cell.IsHeader()) is {} strayInPathCols) { return strayInPathCols; }
+
+        if (FindStray(margin, 1, cell => cell is not LexedCell.Blank, "") is { } strayInMargin)
+        {
+            var c = strayInMargin.FocusCell!.Value;
+            return strayInMargin with
+            {
+                Msg = isTp 
+                    ? $"Cell at {c} is above the first blank path column, so it must be blank."
+                    : $"Cell at {c} is left of the first blank path row, so it must be blank."
+            };
+        }
+
+        if (FindStray(pathRows, 0, cell => cell.IsHeader(), isTp ? "Path Columns" : "Path Rows") is { } strayInRows)
+        {
+            return strayInRows;
+        }
+
+        if (FindStray(pathCols, 0, cell => cell.IsHeader(), isTp ? "Path Rows" : "Path Columns") is { } strayInCols)
+        {
+            return strayInCols;
+        }
         
         pathRows = pathRows.SliceRows(pathRowBeg.Row..);
         pathCols = pathCols.SliceCols(pathColBeg.Col..);
 
         // TODO where to check validity of paths with IsAppend=true?
         // TODO where to check that first path element has correct type?
-        
-        var mtxItems = ParsePathCols(pathCols, pathRows, interior);
-        return new AstNode.Branch(mtxItems.ToImmutableArray(), mtxKind.ToBranchKind());
+
+        var mtxRect = subSheet.OuterRect;
+        var mtxItems = ParsePathCols(pathCols, pathRows, interior, mtxRect);
+        return new AstNode.Branch(mtxItems.ToImmutableArray(), mtxKind.ToBranchKind(), mtxRect);
     }
 
     private static AstNode? SubSheetToAst(SubSheet<LexedCell> subSheet)
@@ -340,14 +388,14 @@ internal static class Ast
         
         if (!subSheet[firstNonBlank].IsHeader())
         {
-            return StrayCellAtInnerCoord(subSheet, firstNonBlank);
+            return StrayCellAtInnerCoord(subSheet, firstNonBlank, "Value");
         }
 
         var lower = subSheet.SliceRows(firstNonBlank.Row..);
         
         var left = lower.SliceCols(0..firstNonBlank.Col);
         var strayInLeftOrNull = left.CoordAndCellSeq().Find(cell => cell is not LexedCell.Blank);
-        if (strayInLeftOrNull is { } stray) { return StrayCellAtInnerCoord(left, stray); }
+        if (strayInLeftOrNull is { } stray) { return StrayCellAtInnerCoord(left, stray, "Value"); }
 
         var valRange = lower.SliceCols(firstNonBlank.Col..);
 
@@ -355,20 +403,20 @@ internal static class Ast
         {
             LexedCell.JVal jVal => valRange.CoordAndCellSeq().Skip(1).Find(cell => cell is not LexedCell.Blank) switch
             {
-                { } strayCoord => StrayCellAtInnerCoord(valRange, strayCoord),
-                _ => new AstNode.ValCell(jVal.V)
+                { } strayCoord => StrayCellAtInnerCoord(valRange, strayCoord, "Value Cell"),
+                _ => new AstNode.ValCell(jVal.V, valRange.OuterRect)
             },
             LexedCell.MtxHead mtxHead => ParseMtx(valRange),
-            _ => throw new UnreachableException()
+            _ => throw new JmonException<InternalErr>(new("Reached end of switch statement"))
         };
     }
 
     public static AstNode LexedCellsToAst(LexedCell[,] lexedCells)
     {
-        var parseResult = Ast.SubSheetToAst(SubSheet.Create(lexedCells));
-        if (parseResult is { } astNode) { return astNode; }
-
-        throw new Exception("TODO"); // TODO
+        var sheet = SubSheet.Create(lexedCells);
+        var parseResult = Ast.SubSheetToAst(sheet);
+        if (parseResult is { } ast) { return ast; }
+        return new AstNode.Error(null, "Sheet is blank.", sheet.OuterRect);
     }
 }
 
@@ -413,11 +461,11 @@ internal static class JsonTreeOps
         switch (branch.Kind)
         {
             case BranchKind.ArrMtx:
-                yield return new JsonTreeOp.PushNode(state.CurPath, MtxKind.Arr, !state.IsAppend);
+                yield return new JsonTreeOp.PushNode(state.CurPath, MtxKind.Arr, !state.IsAppend, branch.ContribCells);
                 state = state with { IsAppend = false };
                 break;
             case BranchKind.ObjMtx:
-                yield return new JsonTreeOp.PushNode(state.CurPath, MtxKind.Obj, !state.IsAppend);
+                yield return new JsonTreeOp.PushNode(state.CurPath, MtxKind.Obj, !state.IsAppend, branch.ContribCells);
                 state = state with { IsAppend = false };
                 break;
         }
@@ -431,7 +479,13 @@ internal static class JsonTreeOps
                 if (childPath != LexedPath.EmptyNonAppend)
                 {
                     AssignPath badAssignPath = ConvertPath(state.CurPath, childPath, state.IdxForPartialPath);
-                    yield return new JsonTreeOp.ReportErr(badAssignPath, "Append operator must be last in path");
+                    ParseErr parsingErr = new(
+                        badAssignPath.ToJsonPath(),
+                        "Append operator must be last in path.",
+                        null,
+                        childAstNode.ContribCells.ToPublic()
+                    );
+                    yield return new JsonTreeOp.ReportErr(badAssignPath, parsingErr);
                     continue;
                 }
             }
@@ -458,8 +512,14 @@ internal static class JsonTreeOps
 
     private static IEnumerable<JsonTreeOp> MakeTreeOps(MakeTreeOpsState state, AstNode.Error error)
     {
-        yield return new JsonTreeOp.PushNode(state.CurPath, null, !state.IsAppend);
-        yield return new JsonTreeOp.ReportErr(state.CurPath, error.V);
+        yield return new JsonTreeOp.PushNode(state.CurPath, null, !state.IsAppend, error.ContribCells);
+        ParseErr parseErr = new(
+            state.CurPath.ToJsonPath(),
+            error.Msg,
+            error.FocusCell?.ToPublic(),
+            error.ContribCells.ToPublic()
+        );
+        yield return new JsonTreeOp.ReportErr(state.CurPath, parseErr);
         yield return new JsonTreeOp.PopNode();
     }
 
@@ -469,39 +529,45 @@ internal static class JsonTreeOps
         
         if (!isAppend)
         {
-            yield return new JsonTreeOp.Create(parentPath, valCell.V);
+            yield return new JsonTreeOp.Create(parentPath, valCell.Value, valCell.ContribCells);
             yield break;
         }
         
-        switch (valCell.V.V)
+        switch (valCell.Value.V)
         {
             case JsonObject obj:
-                yield return new JsonTreeOp.PushNode(parentPath, MtxKind.Obj, false);
+                yield return new JsonTreeOp.PushNode(parentPath, MtxKind.Obj, false, valCell.ContribCells);
                 var objElmts = obj.ToList();
                 obj.Clear();
                 foreach (var (key, val) in objElmts)
                 {
                     AssignPath childPath = new(parentPath.Items.Append(new PathItem.Key(key)).ToImmutableArray());
-                    yield return new JsonTreeOp.Create(childPath, new AstNode.ValCell(val));
+                    yield return new JsonTreeOp.Create(childPath, val, valCell.ContribCells);
                 }
                 yield return new JsonTreeOp.PopNode();
                 yield break;
             case JsonArray arr:
                 // yield return new(parentPath, valCell, AssignKind.Open);
-                yield return new JsonTreeOp.PushNode(parentPath, MtxKind.Arr, false);
+                yield return new JsonTreeOp.PushNode(parentPath, MtxKind.Arr, false, valCell.ContribCells);
                 var arrElmts = arr.ToList();
                 arr.Clear();
                 foreach (var arrElmt in arrElmts)
                 {
                     var lexedPath = new LexedPath(ImmutableArray.Create<PathItem>(PathItem.ArrayPlus), false);
                     var assignPath = ConvertPath(parentPath, lexedPath, idxForPartialPath);
-                    yield return new JsonTreeOp.Create(assignPath, new AstNode.ValCell(arrElmt));
+                    yield return new JsonTreeOp.Create(assignPath, arrElmt, valCell.ContribCells);
                 }
                 yield return new JsonTreeOp.PopNode();
                 yield break;
             default:
-                yield return new JsonTreeOp.PushNode(parentPath, null, false);
-                yield return new JsonTreeOp.ReportErr(parentPath, "Value cannot be appended");
+                yield return new JsonTreeOp.PushNode(parentPath, null, false, valCell.ContribCells);
+                ParseErr err = new(
+                    parentPath.ToJsonPath(),
+                    "Value cannot be appended.",
+                    null,
+                    valCell.ContribCells.ToPublic()
+                );
+                yield return new JsonTreeOp.ReportErr(parentPath, err);
                 yield return new JsonTreeOp.PopNode();
                 yield break;
         }
@@ -516,11 +582,6 @@ internal static class JsonTreeOps
             error => MakeTreeOps(initialState, error)
         ).ToList();
     }
-
-    static IEnumerable<(AssignPath, AstNode)> MakeTreeOps(AssignPath parentPath, AstNode.Error error)
-    {
-        yield return (parentPath, error);
-    }
 }
 
 internal static class Construction
@@ -531,25 +592,14 @@ internal static class Construction
         public sealed record InArr(JsonArray arr, int idx) : JsonLoc;
     }
 
-    private abstract record SetNodeAtLocRslt
-        : IUnion<SetNodeAtLocRslt, SetNodeAtLocRslt.WasSet, SetNodeAtLocRslt.WasNodeSet, SetNodeAtLocRslt.Error>
-    {
-        public sealed record WasSet : SetNodeAtLocRslt;
-        public sealed record WasNodeSet(JsonNode? V) : SetNodeAtLocRslt;
-        public sealed record Error(string Msg) : SetNodeAtLocRslt;
-    }
-    
-    private static SetNodeAtLocRslt SetNodeAtLoc(JsonLoc location, JsonNode? newNode) =>
-        location.AsOneOf().Match<SetNodeAtLocRslt>(
+    private static OneOf<Success, JsonNode?> SetNodeAtLoc(JsonLoc location, JsonNode? newNode) =>
+        location.AsOneOf().Match<OneOf<Success, JsonNode?>>(
             locInObj =>
             {
                 var (obj, key) = locInObj;
-                if (obj.TryGetPropertyValue(key, out var existing))
-                {
-                    return new SetNodeAtLocRslt.WasNodeSet(existing);
-                }
+                if (obj.TryGetPropertyValue(key, out var existing)) { return existing; }
                 obj[key] = newNode;
-                return new SetNodeAtLocRslt.WasSet();
+                return new Success();
             },
             locInArr =>
             {
@@ -557,13 +607,11 @@ internal static class Construction
                 if (idx == arr.Count)
                 {
 			        arr.Add(newNode);
-			        return new SetNodeAtLocRslt.WasSet();
+			        return new Success();
 		        }
-                else if (idx == (arr.Count - 1))
-                {
-			        return new SetNodeAtLocRslt.WasNodeSet(arr[idx]);
-		        }
-                return new SetNodeAtLocRslt.Error("bad idx");
+                if (idx == (arr.Count - 1)) { return arr[idx]; }
+                InternalErr err = new($"Unexpected index for {arr.GetPath()}: {idx}.");
+                throw new JmonException<InternalErr>(err);
             }
         );
 
@@ -572,13 +620,15 @@ internal static class Construction
         var superRoot = new JsonArray();
         JsonLoc rootLoc = new JsonLoc.InArr(superRoot, 0);
         HashSet<JsonLoc> sealedLocs = new();
-        Stack<JsonLoc> pushedNodes = new();
+        Stack<JsonLoc?> pushedNodes = new();
+        List<ParseErr> parseErrs = new();
 
-        foreach (var treeOp in treeOps) // TEMP
+        foreach (var treeOp in treeOps)
         {
             if (treeOp.AsOneOf().TryPickT1(out JsonTreeOp.PopNode popNode, out var pushOrCreateOrReport))
             {
-                pushedNodes.Pop();
+                var poppedNodeOrNull = pushedNodes.Pop();
+                if (poppedNodeOrNull is {} node) { sealedLocs.Add(node); }
                 continue;
             }
 
@@ -588,58 +638,21 @@ internal static class Construction
                 report => report.Path
             );
             
-            var nodeLoc = rootLoc;
+            var exprCells = pushOrCreateOrReport.Match(
+                push => push.ContribCells.ToPublic(),
+                create => create.ContribCells.ToPublic(),
+                report => report.Err.ExprCells
+            );
 
-            foreach (var pathItem in path.Items)
-            {
-                if (sealedLocs.Contains(nodeLoc))
-                {
-                    throw new Exception("TODO");
-                }
-                
-                pathItem.AsOneOf().Switch(
-                    key =>
-                    {
-                        var newObj = new JsonObject();
-                        var objForNextLoc =
-                            SetNodeAtLoc(nodeLoc, newObj).AsOneOf().Match<JsonObject>(
-                                success => newObj,
-                                existing =>
-                                {
-                                    if (existing.V is JsonObject existingObj) { return existingObj; }
-                                    throw new Exception("TODO");
-                                },
-                                err =>
-                                {
-                                    throw new Exception("TODO");
-                                }
-                            );
-                        nodeLoc = new JsonLoc.InObj(objForNextLoc, key.V.ToUtf16String());
-                    },
-                    idx =>
-                    {
-                        var newArr = new JsonArray();
-                        var arrForNextLoc =
-                            SetNodeAtLoc(nodeLoc, newArr).AsOneOf().Match<JsonArray>(
-                                success => newArr,
-                                existing =>
-                                {
-                                    if (existing.V is JsonArray existingArr) { return existingArr; }
-                                    throw new Exception("TODO");
-                                },
-                                err =>
-                                {
-                                    throw new Exception("TODO");
-                                }
-                            );
-                        nodeLoc = new JsonLoc.InArr(arrForNextLoc, idx.V);
-                    }
-                );
-            }
+            var gotNodeLoc = GetNodeLoc(rootLoc, path, exprCells, sealedLocs)
+                .TryPickT1(out JsonLoc nodeLoc, out ParseErr getNodeLocErr);
+            if (pushOrCreateOrReport.IsT0) { pushedNodes.Push(gotNodeLoc ? null : nodeLoc); }
+            if (!gotNodeLoc) { parseErrs.Add(getNodeLocErr); continue; }
 
             if (pushOrCreateOrReport.TryPickT2(out JsonTreeOp.ReportErr reportErr, out var pushOrCreate))
             {
-                throw new Exception("TODO");
+                parseErrs.Add(reportErr.Err);
+                continue;
             }
 
             var valueToSet = pushOrCreate.Match<JsonNode?>(
@@ -654,25 +667,77 @@ internal static class Construction
 
             var (mustBeNew, seal) = pushOrCreate.Match(push => (push.MustBeNew, false), create => (true, true));
             
-            SetNodeAtLoc(nodeLoc, valueToSet).AsOneOf().Switch(
-                success => { },
-                existing =>
-                {
-                    if (mustBeNew) { throw new Exception("TODO"); }
-                    // can't overwrite open node
-                },
-                err =>
-                {
-                    throw new Exception("TODO"); // handle same way as above
-                }
-            );
-            
+            var errOrNull = SetNodeAtLoc(nodeLoc, valueToSet)
+                .Match<ParseErr?>(
+                    success => null,
+                    existing => mustBeNew
+                        ? new ParseErr(path.ToJsonPath(), "Path is invalid; it already has a value.", null, exprCells)
+                        : null
+                );
+
+            if (errOrNull is { } err) { parseErrs.Add(err); continue; }
             if (seal) { sealedLocs.Add(nodeLoc); }
-            if (pushOrCreate.IsT0) { pushedNodes.Push(nodeLoc); }
         }
+        
+        if (parseErrs.Count == 1) { throw new JmonException<ParseErr>(parseErrs[0]); }
+        if (parseErrs.Any()) { throw new JmonException<MultiErr>(new(parseErrs)); }
         
         var rVal = superRoot[0];
         superRoot.Clear();
         return rVal;
+    }
+
+    private static OneOf<ParseErr, JsonLoc>
+        GetNodeLoc(JsonLoc rootLoc, AssignPath path, CellRect exprCells, IReadOnlySet<JsonLoc> sealedLocs)
+    {
+        var nodeLoc = rootLoc;
+
+        foreach (var i in Enumerable.Range(0, path.Items.Length))
+        {
+            ParseErr MakeParseErr(string msg) =>
+                new(new AssignPath(path.Items[..(i + 1)]).ToJsonPath(), msg, null, exprCells);
+
+            var pathItem = path.Items[i];
+
+            if (sealedLocs.Contains(nodeLoc))
+            {
+                // TODO explain in more detail (perhaps have subPath use range ..i)
+                var msg = "Path is inaccessible; you have already explicitly" +
+                          " assigned a value to its parent.";
+                return MakeParseErr(msg);
+            }
+
+            var errOrNextNodeLoc = pathItem.AsOneOf()
+                .Match<OneOf<ParseErr, JsonLoc>>(
+                    key =>
+                    {
+                        var newObj = new JsonObject();
+                        var keyStr = key.V.ToUtf16String();
+                        return SetNodeAtLoc(nodeLoc, newObj)
+                            .Match<OneOf<ParseErr, JsonLoc>>(
+                                success => new JsonLoc.InObj(newObj, keyStr),
+                                existing => existing is JsonObject existingObj
+                                    ? new JsonLoc.InObj(existingObj, keyStr)
+                                    : MakeParseErr("Path is invalid; its parent is not an Object.")
+                            );
+                    },
+                    idx =>
+                    {
+                        var newArr = new JsonArray();
+                        return SetNodeAtLoc(nodeLoc, newArr)
+                            .Match<OneOf<ParseErr, JsonLoc>>(
+                                success => new JsonLoc.InArr(newArr, idx.V),
+                                existing => existing is JsonArray existingArr
+                                    ? new JsonLoc.InArr(existingArr, idx.V)
+                                    : MakeParseErr("Path is invalid; its parent is not an Array.")
+                            );
+                    }
+                );
+
+            bool gotNextNodeLoc = errOrNextNodeLoc.TryPickT1(out nodeLoc, out _);
+            if (!gotNextNodeLoc) { return errOrNextNodeLoc; }
+        }
+
+        return nodeLoc;
     }
 }
