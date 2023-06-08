@@ -848,10 +848,13 @@ In this example, the nested Matrix in Rows 6 through 11, Columns 5 and 6, gets
 parsed to a JSON Object with five Properties. Those Properties are appended to
 `.h33lz.boss.model`, which goes from having two Properties to having seven.
 
-The Add-Each-To Operator also works when the Value is a String (it concatenates
-the Strings) or an Array (it appends each element to the Array), but not if the
-Value is a Number, a Boolean, or Null. The Value from the Interior and the Value
+The Add-Each-To Operator also works when the Value is an Array
+(it appends each element to the Array), but not if the
+Value is a Number, a Boolean, String, or Null.
+The Value from the Interior and the Value
 residing at the Path (if there is one) must be of the same type.
+
+> **NOTE:** The Add-Each-To Operator may work with Strings in a future version of JMON.
 
 Having added these five models, Becky returns to the Object Matrix for
 "models", adding new rows to name them and give them each one animation. The

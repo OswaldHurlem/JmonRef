@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Text.Encodings.Web;
+using System.Text.Json;
 using LibJmon;
 
 const int kErrCode = -1;
@@ -33,7 +34,11 @@ if (!args.Any())
 using var csvFile = File.OpenRead(args[0]);
 
 string[,] cells = CsvUtil.CsvToCells(csvFile, ",");
-JsonSerializerOptions jsonOpts = new() { WriteIndented = true };
+JsonSerializerOptions jsonOpts = new()
+{
+    WriteIndented = true,
+    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+};
 
 try
 {
