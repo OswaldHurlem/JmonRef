@@ -812,8 +812,8 @@ every other character in _Transylformers_ has just two forms (one if they're
 unlucky), a typical _Transylformers_ game will see Megacula transform into at
 least five different things. In the upcoming game alone, he turns into a cloud
 of smog, disguises himself as a classy coupé de ville, returns to life after a
-faked death (wearing a new coat of paint and insisting upon the name "
-Galvacard"), transforms into a giant Bat-Demon-Mech for the final battle, and
+faked death (wearing a new coat of paint and insisting upon the name
+"Galvacard"), transforms into a giant Bat-Demon-Mech for the final battle, and
 then, when he is finally defeated, withers away into a pile of tiny handguns.
 
 In other words, she needs the Object at Path `.characters.h33lz.boss.model` to
